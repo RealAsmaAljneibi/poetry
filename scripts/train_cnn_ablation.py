@@ -3,33 +3,31 @@ scripts/train_cnn_ablation.py
 
 Systematic ablation study for Emotion1DCNN (from-scratch audio emotion classifier).
 
-Covers all 20 deep learning ingredients from the course:
-  1.  Architecture             7.  LR Schedulers     13. Early Stopping
-  2.  Layers                   8.  Batch Size         14. Data Augmentation
-  3.  Weight Initialization    9.  Regularization     15. Gradient Clipping
-  4.  Loss Function           10.  Normalization      16. (repeat of 14 — both listed)
-  5.  Optimizers              11.  Activation Fns     17. Gradient Clipping (repeat)
-  6.  Learning Rate           12.  Checkpointing      18. Warmup
-
-  (+ Label Smoothing, Mixed Precision, Pooling Strategies, Training Logs,
-     Gradient Explosion prevention)
+Explores architectural and training hyperparameter choices including:
+  - Architecture & depth (conv blocks, pooling strategies)
+  - Activation functions & normalization schemes (ReLU, GELU, BatchNorm, GroupNorm)
+  - Loss functions (CrossEntropy, Focal loss with label smoothing)
+  - Optimizers & learning rate schedules (SGD+momentum, Adam, AdamW with cosine annealing)
+  - Regularization strategies (dropout, L2 weight decay, gradient clipping)
+  - Data augmentation (SpecAugment, MixUp, CutMix on mel-spectrograms)
+  - Training stability (gradient explosion detection, early stopping, mixed precision)
 
 Run naming convention (consistent with Whisper ASR runs):
   CNN-R1  Baseline       — AdamW + cosine + BatchNorm + ReLU + Focal + MaxPool
-  CNN-R2  Activation     — GELU vs LeakyReLU  (ingredient 11)
+  CNN-R2  Activation     — GELU vs LeakyReLU
   CNN-R3  Loss           — CE + label_smoothing=0.1 vs Focal γ=1 vs Focal γ=2
-  CNN-R4  Optimizer      — SGD+momentum vs Adam vs AdamW (ingredient 5)
-  CNN-R5  Normalization  — GroupNorm vs LayerNorm vs no norm (ingredient 10)
-  CNN-R6  Architecture   — deeper (3 conv blocks) vs shallower (1 block) (ingredients 1,2)
-  CNN-R7  Augmentation   — SpecAugment on/off, Gaussian noise, mixup (ingredient 14)
-  CNN-R8  Regularization — dropout sweep 0.1 / 0.3 / 0.5 + L2 weight decay (ingredient 9)
-  CNN-R9  Pooling        — MaxPool vs AvgPool vs AdaptiveAvgPool(4) (ingredient 22)
-  CNN-R10 Scheduler      — OneCycleLR vs StepLR vs cosine_annealing (ingredient 7)
-  CNN-R11 Init           — Kaiming vs Xavier vs default (ingredient 3)
-  CNN-R12 Mixed Prec     — AMP float16 vs float32 (ingredient 17)
-  CNN-R13 MixUp          — mel-spec linear blend, λ~Beta(0.4,0.4) (ingredient 14 — course notebook)
-  CNN-R14 CutMix         — freq×time patch paste, proportional label (ingredient 14 — course notebook)
-  CNN-R15 MixUp+CutMix   — both augmentations stacked (ingredient 14)
+  CNN-R4  Optimizer      — SGD+momentum vs Adam vs AdamW
+  CNN-R5  Normalization  — GroupNorm vs LayerNorm vs no norm
+  CNN-R6  Architecture   — deeper (3 conv blocks) vs shallower (1 block)
+  CNN-R7  Augmentation   — SpecAugment on/off, Gaussian noise, mixup
+  CNN-R8  Regularization — dropout sweep 0.1 / 0.3 / 0.5 + L2 weight decay
+  CNN-R9  Pooling        — MaxPool vs AvgPool vs AdaptiveAvgPool(4)
+  CNN-R10 Scheduler      — OneCycleLR vs StepLR vs cosine_annealing
+  CNN-R11 Init           — Kaiming vs Xavier vs default
+  CNN-R12 Mixed Prec     — AMP float16 vs float32
+  CNN-R13 MixUp          — mel-spec linear blend, λ~Beta(0.4,0.4)
+  CNN-R14 CutMix         — freq×time patch paste, proportional label
+  CNN-R15 MixUp+CutMix   — both augmentations stacked
   CNN-R16 Best-Combo     — GELU+3-block+CE+dropout=0.1+AvgPool4+OneCycle+MixUp (hyperparameter tuning)
 
 Each run is logged to:
@@ -112,58 +110,58 @@ class CNNAblationConfig:
     """
     One complete configuration for a single ablation run.
 
-    All 20 DL ingredients are represented as explicit fields so that every
+    All major training components are represented as explicit fields so that every
     design decision is documented, versioned, and reproducible.
     """
 
     run_id:       str                          # e.g. "CNN-R1"
     description:  str                          # human-readable one-liner
 
-    # ── Ingredient 1 & 2: Architecture & Layers ───────────────────────────
+    # ── 1 & 2: Architecture & Layers ───────────────────────────
     channels:     list[int]   = None  # conv channel widths per block, e.g. [256, 512]
     kernel_size:  int         = 5
     hidden_dim:   int         = 128   # linear layer width before classifier
 
-    # ── Ingredient 3: Weight Initialization ───────────────────────────────
+    # ── 3: Weight Initialization ───────────────────────────────
     init_scheme:  Literal["kaiming", "xavier", "default"] = "kaiming"
 
-    # ── Ingredient 4: Loss Function ───────────────────────────────────────
+    # ── 4: Loss Function ───────────────────────────────────────
     loss_fn:      Literal["focal", "ce", "ce_smooth"] = "focal"
     focal_gamma:  float       = 2.0
     label_smooth: float       = 0.0   # for "ce_smooth"
 
-    # ── Ingredient 5: Optimizer ───────────────────────────────────────────
+    # ── 5: Optimizer ───────────────────────────────────────────
     optimizer:    Literal["adamw", "adam", "sgd"] = "adamw"
     momentum:     float       = 0.9   # SGD only
 
-    # ── Ingredient 6 & 7: LR and Scheduler ───────────────────────────────
+    # ── 6 & 7: LR and Scheduler ───────────────────────────────
     lr:           float       = 5e-4
     lr_scheduler: Literal["cosine", "onecycle", "step", "none"] = "cosine"
     lr_step_size: int         = 10    # for StepLR
     lr_gamma:     float       = 0.5   # for StepLR
 
-    # ── Ingredient 8: Batch Size ──────────────────────────────────────────
+    # ── 8: Batch Size ──────────────────────────────────────────
     batch_size:   int         = 32
     grad_accum:   int         = 1
 
-    # ── Ingredient 9: Regularization ──────────────────────────────────────
+    # ── 9: Regularization ──────────────────────────────────────
     dropout:      float       = 0.3
     weight_decay: float       = 1e-4
     use_class_weights: bool   = True  # class-weighted loss
 
-    # ── Ingredient 10: Normalization ──────────────────────────────────────
+    # ── 10: Normalization ──────────────────────────────────────
     norm_type:    Literal["batch", "group", "layer", "none"] = "batch"
     group_norm_groups: int    = 32
 
-    # ── Ingredient 11: Activation Functions ───────────────────────────────
+    # ── 11: Activation Functions ───────────────────────────────
     activation:   Literal["relu", "gelu", "leaky_relu"] = "relu"
     leaky_slope:  float       = 0.01
 
-    # ── Ingredient 12 & 13: Checkpointing & Early Stopping ───────────────
+    # ── 12 & 13: Checkpointing & Early Stopping ───────────────
     epochs:       int         = 30
     patience:     int         = 7
 
-    # ── Ingredient 14: Data Augmentation ─────────────────────────────────
+    # ── 14: Data Augmentation ─────────────────────────────────
     spec_augment:       bool  = True
     spec_time_masks:    int   = 2
     spec_time_max:      int   = 40
@@ -179,16 +177,16 @@ class CNNAblationConfig:
     use_cutmix:         bool  = False
     cutmix_alpha:       float = 1.0   # Beta(alpha, alpha) for patch area ratio
 
-    # ── Ingredient 15: Gradient Clipping ─────────────────────────────────
+    # ── 15: Gradient Clipping ─────────────────────────────────
     grad_clip:    float | None = 1.0
 
-    # ── Ingredient 17: Warmup ─────────────────────────────────────────────
+    # ── 17: Warmup ─────────────────────────────────────────────
     warmup_epochs: int        = 2
 
-    # ── Ingredient 17: Mixed Precision ────────────────────────────────────
+    # ── 17: Mixed Precision ────────────────────────────────────
     mixed_precision: bool     = False
 
-    # ── Ingredient 22: Pooling Strategy ──────────────────────────────────
+    # ── 22: Pooling Strategy ──────────────────────────────────
     pool_type:    Literal["adaptive_avg", "adaptive_max", "adaptive_avg4"] = "adaptive_avg"
 
     def __post_init__(self):
@@ -432,7 +430,7 @@ ALL_RUNS = _make_runs()
 class AblationAudioDataset(Dataset):
     """
     Loads mel-spectrogram tensors for ablation training.
-    Supports SpecAugment (ingredient 14) and Gaussian noise augmentation.
+    Supports SpecAugment (14) and Gaussian noise augmentation.
     """
 
     def __init__(
@@ -510,7 +508,7 @@ class AblationAudioDataset(Dataset):
 
         if self.is_train and self.cfg is not None:
             mel = self._spec_augment(mel)
-            # Gaussian noise (ingredient 14)
+            # Gaussian noise (14)
             if self.cfg.gaussian_noise_std > 0:
                 mel = mel + self._rng.normal(0, self.cfg.gaussian_noise_std, mel.shape)
 
@@ -853,7 +851,7 @@ def train_one_run(cfg: CNNAblationConfig, epochs_override: int | None = None) ->
     logger.info("=== {} === {}", cfg.run_id, cfg.description)
     logger.info("Config: {}", json.dumps(cfg.to_dict(), indent=2))
 
-    # ── Ingredient 12: Save config for reproducibility ────────────────────
+    # ── 12: Save config for reproducibility ────────────────────
     (run_out / "config.json").write_text(
         json.dumps(cfg.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8"
     )
@@ -877,7 +875,7 @@ def train_one_run(cfg: CNNAblationConfig, epochs_override: int | None = None) ->
     val_loader  = DataLoader(val_ds,  batch_size=64, shuffle=False, num_workers=0)
     test_loader = DataLoader(test_ds, batch_size=64, shuffle=False, num_workers=0)
 
-    # ── Class weights (ingredient 9) ──────────────────────────────────────
+    # ── Class weights (9) ──────────────────────────────────────
     all_labels = [s["label"] for s in train_ds.samples]
     cw = compute_class_weight("balanced", classes=np.arange(N_CLASSES), y=all_labels)
     class_weights = torch.tensor(cw, dtype=torch.float, device=device)
@@ -895,19 +893,19 @@ def train_one_run(cfg: CNNAblationConfig, epochs_override: int | None = None) ->
     assert out.shape == (2, N_CLASSES), f"Unexpected output shape: {out.shape}"
     logger.info("Forward pass OK — output shape: {}", out.shape)
 
-    # ── Loss (ingredient 4) ───────────────────────────────────────────────
+    # ── Loss (4) ───────────────────────────────────────────────
     loss_fn = make_loss_fn(cfg, class_weights)
 
-    # ── Optimizer (ingredient 5) ──────────────────────────────────────────
+    # ── Optimizer (5) ──────────────────────────────────────────
     optimizer = make_optimizer(cfg, model.parameters())
 
     # ── Scheduler (ingredients 6, 7, 18) ─────────────────────────────────
     scheduler = make_scheduler(cfg, optimizer, n_batches=len(train_loader))
 
-    # ── Mixed Precision Scaler (ingredient 17) ────────────────────────────
+    # ── Mixed Precision Scaler (17) ────────────────────────────
     scaler = GradScaler() if cfg.mixed_precision and device.type == "cuda" else None
 
-    # ── Early stopping (ingredient 13) ───────────────────────────────────
+    # ── Early stopping (13) ───────────────────────────────────
     early_stopper = EarlyStopper(cfg.patience, run_out, cfg.run_id)
     best_val_f1 = -1.0
     best_ckpt_path = early_stopper.best_ckpt
@@ -947,11 +945,11 @@ def train_one_run(cfg: CNNAblationConfig, epochs_override: int | None = None) ->
                 epoch, tr_loss, tr_f1, val_loss, val_f1,
             )
 
-            # ── Checkpointing (ingredient 12) ─────────────────────────────
+            # ── Checkpointing (12) ─────────────────────────────
             if val_f1 > best_val_f1:
                 best_val_f1 = val_f1
 
-            # ── Early Stopping (ingredient 13) ────────────────────────────
+            # ── Early Stopping (13) ────────────────────────────
             if early_stopper.step(val_f1, model):
                 logger.info("Early stop at epoch {} — no val_f1 improvement for {} epochs",
                             epoch, cfg.patience)

@@ -3,7 +3,7 @@ src/models/flexible_cnn.py
 
 FlexibleEmotionCNN — ablation-capable variant of Emotion1DCNN.
 
-Supports all 20 DL ingredients via CNNAblationConfig:
+Supports comprehensive architectural and training parameter exploration:
   - Variable depth / width (channels list)
   - Pluggable normalization  (BatchNorm / GroupNorm / LayerNorm / none)
   - Pluggable activation     (ReLU / GELU / LeakyReLU)
@@ -11,7 +11,7 @@ Supports all 20 DL ingredients via CNNAblationConfig:
   - Configurable dropout, hidden_dim, weight_decay, init_scheme
 
 Also exports:
-  - FocalLoss          — imbalanced-class loss (ingredient 4)
+  - FocalLoss          — imbalanced-class loss for handling class imbalance
   - make_loss_fn()     — factory that returns the correct loss for a config
 """
 
@@ -27,7 +27,7 @@ _N_MELS    = 128
 _N_CLASSES = 12   # len(EMOTION_CLASSES) — kept here as default
 
 
-# ── Ingredient 11: Activation factory ─────────────────────────────────────────
+# ──11: Activation factory ─────────────────────────────────────────
 
 def make_activation(name: str, slope: float = 0.01) -> nn.Module:
     """Return the activation module corresponding to *name*."""
@@ -40,7 +40,7 @@ def make_activation(name: str, slope: float = 0.01) -> nn.Module:
     raise ValueError(f"Unknown activation: {name!r}")
 
 
-# ── Ingredient 10: Normalization factory ──────────────────────────────────────
+# ──10: Normalization factory ──────────────────────────────────────
 
 def make_norm(norm_type: str, channels: int, group_norm_groups: int = 32) -> nn.Module | None:
     """Return the normalization module, or *None* for norm_type='none'."""
@@ -56,7 +56,7 @@ def make_norm(norm_type: str, channels: int, group_norm_groups: int = 32) -> nn.
     raise ValueError(f"Unknown norm_type: {norm_type!r}")
 
 
-# ── Ingredient 22: Pooling strategy factory ───────────────────────────────────
+# ──22: Pooling strategy factory ───────────────────────────────────
 
 def make_pool(pool_type: str) -> nn.Module:
     """Return the temporal pooling module corresponding to *pool_type*."""
@@ -104,7 +104,7 @@ class FlexibleEmotionCNN(nn.Module):
                 blocks.append(nn.MaxPool1d(kernel_size=2))
             in_ch = out_ch
 
-        # Final pooling (ingredient 22)
+        # Final pooling
         blocks.append(make_pool(cfg.pool_type))
         self.features = nn.Sequential(*blocks)
 
@@ -158,7 +158,7 @@ class FlexibleEmotionCNN(nn.Module):
         return self.classifier(self.embed(x))
 
 
-# ── Ingredient 4: Loss functions ──────────────────────────────────────────────
+# ──4: Loss functions ──────────────────────────────────────────────
 
 class FocalLoss(nn.Module):
     """
