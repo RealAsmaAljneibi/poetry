@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
+.env
+.env.*
+*.env
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Large model files & weights
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.h5
+*.pkl
+*.pickle
+
+# Model directories (downloaded weights)
+models/local/
+models/checkpoints/
+models/fine_tuned/
+models/saved/
+
+# Data (large datasets)
+data/raw/
+data/processed/
+data/external/
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+
+# Outputs (large experiment results)
+outputs/
+
+# Logs (can be regenerated)
+logs/
+
+# Hugging Face cache
+.cache/
+**/.cache/
+
+# TensorBoard
+runs/
+tb_logs/
+
+# uv lock (optional: include if you want reproducible installs)
+# uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ruff
+.ruff_cache/

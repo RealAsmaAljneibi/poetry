@@ -1,0 +1,21 @@
+{
+  "task": "emotion_audio",
+  "train_jsonl": "data/processed/train.jsonl",
+  "val_jsonl": "data/processed/val.jsonl",
+  "test_jsonl": "data/processed/test.jsonl",
+  "output_dir": "outputs/models/audio_cnn",
+  "epochs": 30,
+  "batch_size": 32,
+  "grad_accum_steps": 1,
+  "learning_rate": 0.001,
+  "weight_decay": 0.0001,
+  "warmup_ratio": 0.05,
+  "dropout": 0.1,
+  "patience": 10,
+  "scheduler": "cosine",
+  "seed": 42,
+  "max_audio_sec": 8,
+  "sample_rate": 16000,
+  "n_mels": 128,
+  "noise_amplitude": 0.005
+}
