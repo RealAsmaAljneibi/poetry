@@ -1,6 +1,6 @@
 # Nabat-AI: Multimodal Deep Learning for Khaleeji/Nabati Poetry Analysis
 
-**Course:** Deep Learning (MAAI7103) · **Student:** Asma Salem Mubarak Najem Aljneibi · **Date:** 2026-04-30
+**Course:** Deep Learning (MAAI7103) · **Student:** Asma Aljneibi · **Date:** 2026-04-30
 
 ---
 
