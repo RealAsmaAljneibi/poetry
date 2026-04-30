@@ -20,22 +20,22 @@ from pathlib import Path
 from loguru import logger
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    classification_report, f1_score, accuracy_score
-)
+from sklearn.metrics import classification_report, f1_score, accuracy_score
+from transformers import AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.labels import GENRE_CLASSES, encode_genre
 
-DATA_DIR   = Path("data/processed")
+DATA_DIR = Path("data/processed")
 TRAIN_FILE = DATA_DIR / "train.jsonl"
-VAL_FILE   = DATA_DIR / "val.jsonl"
-TEST_FILE  = DATA_DIR / "test.jsonl"
+VAL_FILE = DATA_DIR / "val.jsonl"
+TEST_FILE = DATA_DIR / "test.jsonl"
 
 SEPARATOR = "=" * 70
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def load_split(path: Path) -> list[dict]:
     records = []
@@ -48,7 +48,7 @@ def load_split(path: Path) -> list[dict]:
 def extract_genre_text(records: list[dict]) -> tuple[list[str], list[int]]:
     texts, labels = [], []
     for rec in records:
-        text  = rec.get("text_corrected", "").strip()
+        text = rec.get("text_corrected", "").strip()
         genre = rec.get("genre_en", "").strip()
         label = encode_genre(genre)
         if text and label != -1:
@@ -59,20 +59,23 @@ def extract_genre_text(records: list[dict]) -> tuple[list[str], list[int]]:
 
 # ── 1. TF-IDF + LogReg ───────────────────────────────────────────────────────
 
+
 def run_tfidf_logreg() -> None:
     logger.info(SEPARATOR)
     logger.info("DIAGNOSTIC 1 — TF-IDF + Logistic Regression (genre)")
     logger.info(SEPARATOR)
 
     train_recs = load_split(TRAIN_FILE)
-    val_recs   = load_split(VAL_FILE)
-    test_recs  = load_split(TEST_FILE)
+    val_recs = load_split(VAL_FILE)
+    test_recs = load_split(TEST_FILE)
 
     X_train, y_train = extract_genre_text(train_recs)
-    X_val,   y_val   = extract_genre_text(val_recs)
-    X_test,  y_test  = extract_genre_text(test_recs)
+    X_val, y_val = extract_genre_text(val_recs)
+    X_test, y_test = extract_genre_text(test_recs)
 
-    logger.info(f"Train: {len(X_train)} samples | Val: {len(X_val)} | Test: {len(X_test)}")
+    logger.info(
+        f"Train: {len(X_train)} samples | Val: {len(X_val)} | Test: {len(X_test)}"
+    )
 
     # TF-IDF: character 3-5 grams catch morphological variants in Arabic
     tfidf = TfidfVectorizer(
@@ -102,7 +105,7 @@ def run_tfidf_logreg() -> None:
     logger.info(f"Word TF-IDF vocab size: {len(tfidf_w.vocabulary_):,}")
 
     present_classes = sorted(set(y_train))
-    present_names   = [GENRE_CLASSES[i].split("(")[0].strip() for i in present_classes]
+    present_names = [GENRE_CLASSES[i].split("(")[0].strip() for i in present_classes]
 
     for name, Xtr, Xva, Xte, label in [
         ("char 3-5gram", X_tr, X_va, X_te, "char"),
@@ -117,12 +120,12 @@ def run_tfidf_logreg() -> None:
         )
         clf.fit(Xtr, y_train)
 
-        val_preds  = clf.predict(Xva)
+        val_preds = clf.predict(Xva)
         test_preds = clf.predict(Xte)
 
-        val_f1  = f1_score(y_val,  val_preds,  average="macro", zero_division=0)
+        val_f1 = f1_score(y_val, val_preds, average="macro", zero_division=0)
         test_f1 = f1_score(y_test, test_preds, average="macro", zero_division=0)
-        val_acc  = accuracy_score(y_val,  val_preds)
+        val_acc = accuracy_score(y_val, val_preds)
         test_acc = accuracy_score(y_test, test_preds)
 
         logger.info(f"\n--- TF-IDF ({name}) + LogReg ---")
@@ -130,30 +133,34 @@ def run_tfidf_logreg() -> None:
         logger.info(f"  Test Macro-F1={test_f1:.4f}  Acc={test_acc:.4f}")
 
         report = classification_report(
-            y_test, test_preds,
+            y_test,
+            test_preds,
             labels=present_classes,
             target_names=present_names,
             zero_division=0,
         )
         logger.info(f"\n  Per-class (test):\n{report}")
 
-        # Most confident misclassifications
         probs = clf.predict_proba(Xte)
         errors = [
             (i, y_test[i], test_preds[i], probs[i].max())
-            for i in range(len(y_test)) if y_test[i] != test_preds[i]
+            for i in range(len(y_test))
+            if y_test[i] != test_preds[i]
         ]
         errors.sort(key=lambda x: -x[3])  # sort by model confidence
         logger.info("  Top-5 confident mistakes (true → pred, confidence):")
         for idx, true_id, pred_id, conf in errors[:5]:
             true_name = GENRE_CLASSES[true_id].split("(")[0].strip()
             pred_name = GENRE_CLASSES[pred_id].split("(")[0].strip()
-            logger.info(f"    [{true_name}] → [{pred_name}] conf={conf:.2f} | "
-                        f"'{X_test[idx][:80]}'")
+            logger.info(
+                f"    [{true_name}] → [{pred_name}] conf={conf:.2f} | "
+                f"'{X_test[idx][:80]}'"
+            )
         break  # print detailed report only for char ngram; summary for word follows above
 
 
 # ── 2. Genre distribution per split ──────────────────────────────────────────
+
 
 def run_split_distribution() -> None:
     logger.info(SEPARATOR)
@@ -163,7 +170,11 @@ def run_split_distribution() -> None:
     counts: dict[str, Counter] = {}
     totals: dict[str, int] = {}
 
-    for split_name, path in [("train", TRAIN_FILE), ("val", VAL_FILE), ("test", TEST_FILE)]:
+    for split_name, path in [
+        ("train", TRAIN_FILE),
+        ("val", VAL_FILE),
+        ("test", TEST_FILE),
+    ]:
         recs = load_split(path)
         genre_cnt: Counter = Counter()
         for rec in recs:
@@ -173,10 +184,9 @@ def run_split_distribution() -> None:
         totals[split_name] = sum(genre_cnt.values())
         logger.info(f"{split_name.upper()}: {totals[split_name]} clips total")
 
-    # Get all genres seen anywhere
     all_genres = sorted(
         set(g for c in counts.values() for g in c),
-        key=lambda g: -counts["train"].get(g, 0)
+        key=lambda g: -counts["train"].get(g, 0),
     )
 
     header = f"{'Genre':42s}  {'Train':>10}  {'Val':>10}  {'Test':>10}"
@@ -188,9 +198,9 @@ def run_split_distribution() -> None:
         va = counts["val"].get(genre, 0)
         te = counts["test"].get(genre, 0)
 
-        tr_pct = tr / totals["train"]  * 100 if totals["train"]  else 0
-        va_pct = va / totals["val"]    * 100 if totals["val"]    else 0
-        te_pct = te / totals["test"]   * 100 if totals["test"]   else 0
+        tr_pct = tr / totals["train"] * 100 if totals["train"] else 0
+        va_pct = va / totals["val"] * 100 if totals["val"] else 0
+        te_pct = te / totals["test"] * 100 if totals["test"] else 0
 
         flag = ""
         # Flag if a genre is absent in val or test (train-only leakage)
@@ -210,10 +220,13 @@ def run_split_distribution() -> None:
             f"{flag}"
         )
 
-    # Poet disjoint check
     logger.info("\nPoet-disjoint check (no poet should appear in >1 split):")
     poet_splits: dict[str, set] = {}
-    for split_name, path in [("train", TRAIN_FILE), ("val", VAL_FILE), ("test", TEST_FILE)]:
+    for split_name, path in [
+        ("train", TRAIN_FILE),
+        ("val", VAL_FILE),
+        ("test", TEST_FILE),
+    ]:
         for rec in load_split(path):
             p = rec.get("poet_en", "")
             poet_splits.setdefault(p, set()).add(split_name)
@@ -229,6 +242,7 @@ def run_split_distribution() -> None:
 
 # ── 3. Spot-check examples ────────────────────────────────────────────────────
 
+
 def run_spot_check(n_per_split: int = 5) -> None:
     logger.info(SEPARATOR)
     logger.info("DIAGNOSTIC 3 — Spot-check Examples (text + genre label)")
@@ -238,33 +252,38 @@ def run_spot_check(n_per_split: int = 5) -> None:
     # Sample from genres we suspect might be mislabeled
     priority_genres = {"Ghazal", "Shajan", "Hikma", "Wataniyya", "Fakhr"}
 
-    for split_name, path in [("train", TRAIN_FILE), ("val", VAL_FILE), ("test", TEST_FILE)]:
+    for split_name, path in [
+        ("train", TRAIN_FILE),
+        ("val", VAL_FILE),
+        ("test", TEST_FILE),
+    ]:
         recs = load_split(path)
         # Prefer records from priority genres, then fill randomly
-        priority = [r for r in recs if r.get("genre_en", "").split("(")[0].strip() in priority_genres]
+        priority = [
+            r
+            for r in recs
+            if r.get("genre_en", "").split("(")[0].strip() in priority_genres
+        ]
         sample = random.sample(priority, min(n_per_split, len(priority)))
 
         logger.info(f"\n--- {split_name.upper()} ({n_per_split} samples) ---")
         for rec in sample:
-            genre   = rec.get("genre_en", "N/A")
+            genre = rec.get("genre_en", "N/A")
             emotion = rec.get("emotion_cat_en", "N/A")
-            poet    = rec.get("poet_en", "N/A")
-            text    = rec.get("text_corrected", rec.get("text", "")).strip()
-            short   = text[:120] + ("…" if len(text) > 120 else "")
-            logger.info(
-                f"  [{genre}] [{emotion}] — {poet}\n"
-                f"  Text: {short}"
-            )
+            poet = rec.get("poet_en", "N/A")
+            text = rec.get("text_corrected", rec.get("text", "")).strip()
+            short = text[:120] + ("…" if len(text) > 120 else "")
+            logger.info(f"  [{genre}] [{emotion}] — {poet}\n  Text: {short}")
 
 
 # ── 4. Tokenizer check ────────────────────────────────────────────────────────
+
 
 def run_tokenizer_check() -> None:
     logger.info(SEPARATOR)
     logger.info("DIAGNOSTIC 4 — AraPoemBERT Tokenizer Check")
     logger.info(SEPARATOR)
 
-    from transformers import AutoTokenizer
     MODEL = "faisalq/bert-base-arapoembert"
     tokenizer = AutoTokenizer.from_pretrained(MODEL, local_files_only=True)
 
@@ -282,25 +301,27 @@ def run_tokenizer_check() -> None:
             len_stats.append(len(toks))
 
     len_stats.sort()
-    p50  = len_stats[len(len_stats) // 2]
-    p90  = len_stats[int(len(len_stats) * 0.90)]
-    p99  = len_stats[int(len(len_stats) * 0.99)]
+    p50 = len_stats[len(len_stats) // 2]
+    p90 = len_stats[int(len(len_stats) * 0.90)]
+    p99 = len_stats[int(len(len_stats) * 0.99)]
     truncated = sum(1 for length in len_stats if length > MAX_LEN)
 
     logger.info(f"Tokenized length stats (train, n={len(len_stats)}):")
     logger.info(f"  Median={p50}  P90={p90}  P99={p99}  Max={max(len_stats)}")
-    logger.info(f"  Truncated (>{MAX_LEN} tokens): {truncated} / {len(len_stats)} "
-                f"({truncated/len(len_stats)*100:.1f}%)")
+    logger.info(
+        f"  Truncated (>{MAX_LEN} tokens): {truncated} / {len(len_stats)} "
+        f"({truncated / len(len_stats) * 100:.1f}%)"
+    )
     logger.info(f"  [AraPoemBERT max_position_embeddings = {MAX_LEN}]")
 
     logger.info("\nSample tokenizations:")
     for rec in samples[:5]:
         text = rec.get("text_corrected", "").strip()
         genre = rec.get("genre_en", "?")
-        enc  = tokenizer(text, max_length=MAX_LEN, truncation=True)
+        enc = tokenizer(text, max_length=MAX_LEN, truncation=True)
         toks = tokenizer.convert_ids_to_tokens(enc["input_ids"])
         n_before = len(tokenizer(text, truncation=False)["input_ids"])
-        n_after  = len(enc["input_ids"])
+        n_after = len(enc["input_ids"])
         flag = f"  ← TRUNCATED {n_before}→{n_after}" if n_before > MAX_LEN else ""
         logger.info(
             f"\n  Genre: {genre}\n"
@@ -308,17 +329,18 @@ def run_tokenizer_check() -> None:
             f"  Tokens ({n_before} total{flag}): {' | '.join(toks)}"
         )
 
-    # Check unknown-token rate (UNK = [UNK])
     unk_id = tokenizer.unk_token_id
     total_toks = 0
-    unk_toks   = 0
+    unk_toks = 0
     for rec in train_recs:
         text = rec.get("text_corrected", "").strip()
         if text:
             ids = tokenizer(text, max_length=MAX_LEN, truncation=True)["input_ids"]
             total_toks += len(ids)
-            unk_toks   += ids.count(unk_id)
-    logger.info(f"\n[UNK] rate: {unk_toks}/{total_toks} tokens = {unk_toks/total_toks*100:.2f}%")
+            unk_toks += ids.count(unk_id)
+    logger.info(
+        f"\n[UNK] rate: {unk_toks}/{total_toks} tokens = {unk_toks / total_toks * 100:.2f}%"
+    )
     if unk_toks / total_toks > 0.05:
         logger.warning("  HIGH UNK rate — tokenizer may not cover your dialect well!")
     else:

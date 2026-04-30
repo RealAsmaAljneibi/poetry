@@ -51,15 +51,16 @@ from src.evaluation.metrics import (
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-DATA_DIR    = Path("data/processed")
+DATA_DIR = Path("data/processed")
 RETRIEVAL_DIR = Path("outputs/retrieval")
-REPORT_DIR  = Path("outputs/reports")
+REPORT_DIR = Path("outputs/reports")
 
 TRAIN_VAL_SPLITS = [DATA_DIR / "train.jsonl", DATA_DIR / "val.jsonl"]
-TEST_SPLIT       = DATA_DIR / "test.jsonl"
+TEST_SPLIT = DATA_DIR / "test.jsonl"
 
 
 # ── Metric helpers ────────────────────────────────────────────────────────────
+
 
 def precision_at_k(retrieved_relevant: list[bool], k: int) -> float:
     """Fraction of top-K that are relevant."""
@@ -83,11 +84,11 @@ def ndcg_at_k(retrieved_relevant: list[bool], k: int) -> float:
     NDCG = DCG / IDCG
     """
     topk = retrieved_relevant[:k]
-    dcg  = sum(rel / math.log2(i + 2) for i, rel in enumerate(topk))
+    dcg = sum(rel / math.log2(i + 2) for i, rel in enumerate(topk))
 
-    n_rel = sum(retrieved_relevant)   # total relevant in whole result list
-    ideal = [1] * min(n_rel, k)       # perfect ranking: all relevant first
-    idcg  = sum(1 / math.log2(i + 2) for i in range(len(ideal)))
+    n_rel = sum(retrieved_relevant)  # total relevant in whole result list
+    ideal = [1] * min(n_rel, k)  # perfect ranking: all relevant first
+    idcg = sum(1 / math.log2(i + 2) for i in range(len(ideal)))
 
     return dcg / idcg if idcg > 0 else 0.0
 
@@ -102,6 +103,7 @@ def reciprocal_rank(retrieved_relevant: list[bool]) -> float:
 
 # ── Unique record identifier ───────────────────────────────────────────────────
 
+
 def record_id(rec: dict) -> str:
     """Stable unique identifier: prefer audio_filename, fall back to text hash."""
     af = rec.get("audio_filename", "").strip()
@@ -112,6 +114,7 @@ def record_id(rec: dict) -> str:
 
 
 # ── Build or load retriever ────────────────────────────────────────────────────
+
 
 def load_retriever_no_bert() -> tuple[NabatiRetriever, np.ndarray]:
     """
@@ -131,7 +134,7 @@ def load_retriever_no_bert() -> tuple[NabatiRetriever, np.ndarray]:
     retriever = NabatiRetriever.load(RETRIEVAL_DIR, device="cpu", load_encoder=False)
 
     # Reconstruct all stored vectors from the FAISS index
-    n   = retriever.text_index.ntotal
+    n = retriever.text_index.ntotal
     dim = NabatiRetriever.TEXT_DIM
     all_vecs = np.zeros((n, dim), dtype=np.float32)
     retriever.text_index.reconstruct_n(0, n, all_vecs)
@@ -142,8 +145,8 @@ def load_retriever_no_bert() -> tuple[NabatiRetriever, np.ndarray]:
 
 def search_by_vector(
     retriever: NabatiRetriever,
-    q_vec:     np.ndarray,
-    top_k:     int,
+    q_vec: np.ndarray,
+    top_k: int,
     exclude_id: str,
 ) -> list[dict]:
     """
@@ -167,14 +170,15 @@ def search_by_vector(
 
 # ── Per-query evaluation ───────────────────────────────────────────────────────
 
+
 def evaluate_queries(
-    retriever:  NabatiRetriever,
-    all_vecs:   np.ndarray,
-    id_to_pos:  dict[str, int],
-    queries:    list[dict],
-    label_key:  str,
-    ks:         list[int],
-    max_fetch:  int = 200,
+    retriever: NabatiRetriever,
+    all_vecs: np.ndarray,
+    id_to_pos: dict[str, int],
+    queries: list[dict],
+    label_key: str,
+    ks: list[int],
+    max_fetch: int = 200,
 ) -> dict:
     """
     Run every query against the retriever and accumulate IR metrics.
@@ -192,29 +196,27 @@ def evaluate_queries(
     dict with per-K averages: P@K, R@K, NDCG@K, MRR
     """
     # Count indexed docs per label (for recall denominator)
-    label_counts: Counter = Counter(
-        r.get(label_key, "") for r in retriever.records
-    )
+    label_counts: Counter = Counter(r.get(label_key, "") for r in retriever.records)
 
     # Accumulators
-    sum_p         = defaultdict(float)
-    sum_r         = defaultdict(float)
-    sum_ndcg      = defaultdict(float)
+    sum_p = defaultdict(float)
+    sum_r = defaultdict(float)
+    sum_ndcg = defaultdict(float)
     sum_graded_ndcg = defaultdict(float)
-    sum_mrr       = 0.0
-    n_valid       = 0
+    sum_mrr = 0.0
+    n_valid = 0
 
     # Determine companion emotion/genre key for graded nDCG
     if label_key == "genre_en":
         emotion_key_for_graded = "emotion_text"
-        genre_key_for_graded   = "genre_en"
+        genre_key_for_graded = "genre_en"
     else:
         emotion_key_for_graded = label_key
-        genre_key_for_graded   = "genre_en"
+        genre_key_for_graded = "genre_en"
 
     for query_rec in queries:
         q_label = query_rec.get(label_key, "").strip()
-        q_id    = record_id(query_rec)
+        q_id = record_id(query_rec)
 
         if not q_label:
             continue
@@ -222,7 +224,7 @@ def evaluate_queries(
         # Look up the stored vector for this poem
         pos = id_to_pos.get(q_id)
         if pos is None:
-            continue   # poem not in index — skip
+            continue  # poem not in index — skip
 
         # Total relevant docs in the index (same label, excluding query itself)
         total_relevant = max(0, label_counts.get(q_label, 0) - 1)
@@ -236,15 +238,18 @@ def evaluate_queries(
         relevance = [r.get(label_key, "") == q_label for r in results]
 
         # Graded nDCG parameters
-        q_genre   = query_rec.get(genre_key_for_graded, "").strip()
+        q_genre = query_rec.get(genre_key_for_graded, "").strip()
         q_emotion = query_rec.get(emotion_key_for_graded, "").strip()
 
         for k in ks:
-            sum_p[k]    += precision_at_k(relevance, k)
-            sum_r[k]    += recall_at_k(relevance, total_relevant, k)
+            sum_p[k] += precision_at_k(relevance, k)
+            sum_r[k] += recall_at_k(relevance, total_relevant, k)
             sum_ndcg[k] += ndcg_at_k(relevance, k)
             sum_graded_ndcg[k] += graded_ndcg_at_k(
-                results, q_genre, q_emotion, k=k,
+                results,
+                q_genre,
+                q_emotion,
+                k=k,
                 genre_key=genre_key_for_graded,
                 emotion_key=emotion_key_for_graded,
             )
@@ -257,22 +262,23 @@ def evaluate_queries(
 
     return {
         "n_queries": n_valid,
-        "MRR":       sum_mrr / n_valid,
-        **{f"P@{k}":           sum_p[k]            / n_valid for k in ks},
-        **{f"R@{k}":           sum_r[k]            / n_valid for k in ks},
-        **{f"NDCG@{k}":        sum_ndcg[k]         / n_valid for k in ks},
-        **{f"GradedNDCG@{k}":  sum_graded_ndcg[k]  / n_valid for k in ks},
+        "MRR": sum_mrr / n_valid,
+        **{f"P@{k}": sum_p[k] / n_valid for k in ks},
+        **{f"R@{k}": sum_r[k] / n_valid for k in ks},
+        **{f"NDCG@{k}": sum_ndcg[k] / n_valid for k in ks},
+        **{f"GradedNDCG@{k}": sum_graded_ndcg[k] / n_valid for k in ks},
     }
 
 
 # ── Creative metrics ──────────────────────────────────────────────────────────
 
+
 def poet_diversity_at_k(
-    retriever:  NabatiRetriever,
-    all_vecs:   np.ndarray,
-    id_to_pos:  dict[str, int],
-    queries:    list[dict],
-    k:          int,
+    retriever: NabatiRetriever,
+    all_vecs: np.ndarray,
+    id_to_pos: dict[str, int],
+    queries: list[dict],
+    k: int,
 ) -> float:
     """
     Average number of distinct poets in top-K results.
@@ -282,23 +288,27 @@ def poet_diversity_at_k(
     total_distinct = 0.0
     n = 0
     for query_rec in queries:
-        q_id  = record_id(query_rec)
-        pos   = id_to_pos.get(q_id)
+        q_id = record_id(query_rec)
+        pos = id_to_pos.get(q_id)
         if pos is None:
             continue
         results = search_by_vector(retriever, all_vecs[pos], k, q_id)
-        poets = {r.get("poet_en", "").strip() for r in results if r.get("poet_en", "").strip()}
+        poets = {
+            r.get("poet_en", "").strip()
+            for r in results
+            if r.get("poet_en", "").strip()
+        }
         total_distinct += len(poets)
         n += 1
     return total_distinct / n if n else 0.0
 
 
 def round_trip_symmetry(
-    retriever:  NabatiRetriever,
-    all_vecs:   np.ndarray,
-    id_to_pos:  dict[str, int],
-    queries:    list[dict],
-    k:          int,
+    retriever: NabatiRetriever,
+    all_vecs: np.ndarray,
+    id_to_pos: dict[str, int],
+    queries: list[dict],
+    k: int,
 ) -> float:
     """
     Round-trip consistency: for each query A, find its top result B.
@@ -313,23 +323,21 @@ def round_trip_symmetry(
     n = 0
     for query_rec in queries:
         q_id = record_id(query_rec)
-        pos  = id_to_pos.get(q_id)
+        pos = id_to_pos.get(q_id)
         if pos is None:
             continue
 
-        # Step 1: find top result B (exclude self)
         results_a = search_by_vector(retriever, all_vecs[pos], 1, q_id)
         if not results_a:
             continue
         top_b = results_a[0]
-        b_id  = record_id(top_b)
+        b_id = record_id(top_b)
         b_pos = id_to_pos.get(b_id)
         if b_pos is None:
             continue
 
-        # Step 2: query from B's vector, check if A is in top-K
         results_b = search_by_vector(retriever, all_vecs[b_pos], k, b_id)
-        found_a   = any(record_id(r) == q_id for r in results_b)
+        found_a = any(record_id(r) == q_id for r in results_b)
 
         successes += int(found_a)
         n += 1
@@ -338,12 +346,12 @@ def round_trip_symmetry(
 
 
 def genre_purity_per_class(
-    retriever:  NabatiRetriever,
-    all_vecs:   np.ndarray,
-    id_to_pos:  dict[str, int],
-    queries:    list[dict],
-    k:          int,
-    label_key:  str,
+    retriever: NabatiRetriever,
+    all_vecs: np.ndarray,
+    id_to_pos: dict[str, int],
+    queries: list[dict],
+    k: int,
+    label_key: str,
 ) -> dict[str, float]:
     """
     For each class (genre or emotion), report mean P@K for queries from that class.
@@ -353,7 +361,7 @@ def genre_purity_per_class(
 
     for query_rec in queries:
         q_label = query_rec.get(label_key, "").strip()
-        q_id    = record_id(query_rec)
+        q_id = record_id(query_rec)
         if not q_label:
             continue
         pos = id_to_pos.get(q_id)
@@ -369,11 +377,12 @@ def genre_purity_per_class(
 
 # ── Embedding-space cluster purity ────────────────────────────────────────────
 
+
 def embedding_cluster_purity(
     retriever: NabatiRetriever,
-    all_vecs:  np.ndarray,
+    all_vecs: np.ndarray,
     label_key: str,
-    k:         int = 10,
+    k: int = 10,
 ) -> float:
     """
     For every record in the index, find its k nearest neighbours and compute
@@ -383,7 +392,7 @@ def embedding_cluster_purity(
     This measures the quality of the embedding space itself, independent
     of any particular query set.
     """
-    n      = retriever.text_index.ntotal
+    n = retriever.text_index.ntotal
     labels = [r.get(label_key, "") for r in retriever.records]
 
     # Batch search: k+1 because result includes self
@@ -394,8 +403,9 @@ def embedding_cluster_purity(
         own_label = labels[i]
         if not own_label:
             continue
-        neighbours = [idxs[i, j] for j in range(k + 1)
-                      if idxs[i, j] != i and idxs[i, j] >= 0][:k]
+        neighbours = [
+            idxs[i, j] for j in range(k + 1) if idxs[i, j] != i and idxs[i, j] >= 0
+        ][:k]
         if not neighbours:
             continue
         same = sum(1 for nb in neighbours if labels[nb] == own_label)
@@ -406,12 +416,13 @@ def embedding_cluster_purity(
 
 # ── Imagery coherence ─────────────────────────────────────────────────────────
 
+
 def imagery_coherence_eval(
-    retriever:  NabatiRetriever,
-    all_vecs:   np.ndarray,
-    id_to_pos:  dict[str, int],
-    queries:    list[dict],
-    k:          int,
+    retriever: NabatiRetriever,
+    all_vecs: np.ndarray,
+    id_to_pos: dict[str, int],
+    queries: list[dict],
+    k: int,
     imagery_key: str = "imagery_tags_en",
 ) -> float:
     """
@@ -420,8 +431,8 @@ def imagery_coherence_eval(
     """
     scores = []
     for query_rec in queries:
-        q_id  = record_id(query_rec)
-        pos   = id_to_pos.get(q_id)
+        q_id = record_id(query_rec)
+        pos = id_to_pos.get(q_id)
         if pos is None:
             continue
 
@@ -432,7 +443,7 @@ def imagery_coherence_eval(
             continue  # skip queries with no imagery tags
 
         results = search_by_vector(retriever, all_vecs[pos], k, q_id)
-        score   = imagery_coherence_at_k(results, raw_tags, k=k, imagery_key=imagery_key)
+        score = imagery_coherence_at_k(results, raw_tags, k=k, imagery_key=imagery_key)
         if not (score != score):  # not NaN
             scores.append(score)
 
@@ -441,13 +452,14 @@ def imagery_coherence_eval(
 
 # ── Query robustness ──────────────────────────────────────────────────────────
 
+
 def query_robustness_eval(
-    retriever:  NabatiRetriever,
-    all_vecs:   np.ndarray,
-    id_to_pos:  dict[str, int],
-    queries:    list[dict],
-    k:          int = 10,
-    n_sample:   int = 20,
+    retriever: NabatiRetriever,
+    all_vecs: np.ndarray,
+    id_to_pos: dict[str, int],
+    queries: list[dict],
+    k: int = 10,
+    n_sample: int = 20,
     n_variants: int = 3,
 ) -> float:
     """
@@ -456,6 +468,7 @@ def query_robustness_eval(
     Target: > 0.85 for a robust retrieval system.
     """
     import random
+
     rng = random.Random(42)
     sample = rng.sample(queries, min(n_sample, len(queries)))
 
@@ -463,8 +476,8 @@ def query_robustness_eval(
         # For robustness, we need to encode the text variant — use stored vector
         # as proxy for the query (approximation; real system would re-encode)
         # Here we find the closest record to the original query text and use it
-        q_id  = record_id(query_rec_ref)
-        pos   = id_to_pos.get(q_id)
+        q_id = record_id(query_rec_ref)
+        pos = id_to_pos.get(q_id)
         if pos is None:
             return []
         return search_by_vector(retriever, all_vecs[pos], top_k, q_id)
@@ -482,11 +495,11 @@ def query_robustness_eval(
 
         # Original retrieval
         q_id = record_id(query_rec)
-        pos  = id_to_pos.get(q_id)
+        pos = id_to_pos.get(q_id)
         if pos is None:
             continue
-        orig_results  = search_by_vector(retriever, all_vecs[pos], k, q_id)
-        original_ids  = {record_id(r) for r in orig_results}
+        orig_results = search_by_vector(retriever, all_vecs[pos], k, q_id)
+        original_ids = {record_id(r) for r in orig_results}
         if not original_ids:
             continue
 
@@ -511,6 +524,7 @@ def query_robustness_eval(
 
 # ── Report formatting ─────────────────────────────────────────────────────────
 
+
 def print_metrics(title: str, metrics: dict) -> None:
     logger.info("─" * 55)
     logger.info(f"  {title}")
@@ -531,14 +545,10 @@ def save_report(
     ks: list[int],
     out_path: Path,
 ) -> None:
-    """Save JSON + human-readable markdown table."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # JSON
     with open(out_path.with_suffix(".json"), "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
 
-    # Markdown table
     lines = ["# Retrieval Evaluation Report\n"]
     for section, data in report.items():
         lines.append(f"\n## {section}\n")
@@ -558,6 +568,7 @@ def save_report(
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main(args: argparse.Namespace) -> None:
     logger.add("logs/evaluate_retrieval.log", rotation="10 MB")
@@ -582,8 +593,7 @@ def main(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # Group clips by poem (source_poem field, fall back to poet+genre key)
-    from collections import defaultdict as _dd
-    poem_clips: dict[str, list[dict]] = _dd(list)
+    poem_clips: dict[str, list[dict]] = defaultdict(list)
     with open(TEST_SPLIT, "r", encoding="utf-8") as f:
         for line in f:
             rec = json.loads(line)
@@ -591,7 +601,7 @@ def main(args: argparse.Namespace) -> None:
                 poem_key = (
                     rec.get("source_poem")
                     or rec.get("poem_id")
-                    or f"{rec.get('poet_en','')}|{rec.get('genre_en','')}"
+                    or f"{rec.get('poet_en', '')}|{rec.get('genre_en', '')}"
                 )
                 poem_clips[poem_key].append(rec)
 
@@ -603,17 +613,18 @@ def main(args: argparse.Namespace) -> None:
     for poem_key, clips in poem_clips.items():
         clips_sorted = sorted(clips, key=lambda r: int(r.get("start") or 0))
         combined_text = " ".join(
-            c["text_corrected"].strip() for c in clips_sorted
+            c["text_corrected"].strip()
+            for c in clips_sorted
             if c.get("text_corrected", "").strip()
         )
         if not combined_text:
             continue
-        # Majority-vote emotion label
-        from collections import Counter as _C
-        emotion_counts = _C(c.get("emotion_text", "") for c in clips_sorted if c.get("emotion_text"))
+        emotion_counts = Counter(
+            c.get("emotion_text", "") for c in clips_sorted if c.get("emotion_text")
+        )
         majority_emotion = emotion_counts.most_common(1)[0][0] if emotion_counts else ""
         rep = {
-            **clips_sorted[0],          # carry all metadata from first clip
+            **clips_sorted[0],  # carry all metadata from first clip
             "text_corrected": combined_text,
             "emotion_text": majority_emotion,
         }
@@ -621,21 +632,31 @@ def main(args: argparse.Namespace) -> None:
 
     logger.info(f"Test queries: {len(queries)} poems (poem-level, aggregated text)")
 
-    ks    = sorted(args.k)
+    ks = sorted(args.k)
     max_k = max(ks)
 
     # ── Standard IR metrics ───────────────────────────────────────────────────
 
     logger.info("Running genre-based retrieval evaluation...")
     genre_metrics = evaluate_queries(
-        retriever, all_vecs, id_to_pos, queries,
-        label_key="genre_en", ks=ks, max_fetch=max_k * 5,
+        retriever,
+        all_vecs,
+        id_to_pos,
+        queries,
+        label_key="genre_en",
+        ks=ks,
+        max_fetch=max_k * 5,
     )
 
     logger.info("Running emotion-based retrieval evaluation (text labels)...")
     emotion_metrics = evaluate_queries(
-        retriever, all_vecs, id_to_pos, queries,
-        label_key="emotion_text", ks=ks, max_fetch=max_k * 5,
+        retriever,
+        all_vecs,
+        id_to_pos,
+        queries,
+        label_key="emotion_text",
+        ks=ks,
+        max_fetch=max_k * 5,
     )
 
     print_metrics("Genre Retrieval", genre_metrics)
@@ -646,21 +667,29 @@ def main(args: argparse.Namespace) -> None:
     logger.info("Computing creative metrics...")
     k_diversity = min(10, max_k)
 
-    poet_div = poet_diversity_at_k(retriever, all_vecs, id_to_pos, queries, k=k_diversity)
-    logger.info(f"Poet Diversity @{k_diversity}: {poet_div:.2f} distinct poets (max={k_diversity})")
+    poet_div = poet_diversity_at_k(
+        retriever, all_vecs, id_to_pos, queries, k=k_diversity
+    )
+    logger.info(
+        f"Poet Diversity @{k_diversity}: {poet_div:.2f} distinct poets (max={k_diversity})"
+    )
 
     logger.info("Computing round-trip symmetry...")
-    rt_sym_5  = round_trip_symmetry(retriever, all_vecs, id_to_pos, queries, k=5)
+    rt_sym_5 = round_trip_symmetry(retriever, all_vecs, id_to_pos, queries, k=5)
     rt_sym_10 = round_trip_symmetry(retriever, all_vecs, id_to_pos, queries, k=10)
     logger.info(f"Round-trip Symmetry @5 : {rt_sym_5:.4f}")
     logger.info(f"Round-trip Symmetry @10: {rt_sym_10:.4f}")
 
     logger.info("Computing embedding cluster purity (genre)...")
-    genre_purity = embedding_cluster_purity(retriever, all_vecs, label_key="genre_en", k=10)
+    genre_purity = embedding_cluster_purity(
+        retriever, all_vecs, label_key="genre_en", k=10
+    )
     logger.info(f"Embedding Genre Purity @10: {genre_purity:.4f}")
 
     logger.info("Computing embedding cluster purity (emotion)...")
-    emotion_purity = embedding_cluster_purity(retriever, all_vecs, label_key="emotion_text", k=10)
+    emotion_purity = embedding_cluster_purity(
+        retriever, all_vecs, label_key="emotion_text", k=10
+    )
     logger.info(f"Embedding Emotion Purity @10: {emotion_purity:.4f}")
 
     logger.info("Computing imagery coherence @10...")
@@ -708,7 +737,7 @@ def main(args: argparse.Namespace) -> None:
     report = {
         "Index": {
             "n_indexed": n_indexed,
-            "splits":    "train + val + test (leave-one-out)",
+            "splits": "train + val + test (leave-one-out)",
             "n_test_queries": len(queries),
             "query_level": "poem (one aggregated query per unique poem)",
         },
@@ -717,13 +746,13 @@ def main(args: argparse.Namespace) -> None:
         "Creative Metrics": {
             f"Poet Diversity @{k_diversity}": poet_div,
             f"Max possible diversity @{k_diversity}": k_diversity,
-            "Round-trip Symmetry @5":   rt_sym_5,
-            "Round-trip Symmetry @10":  rt_sym_10,
-            "Embedding Genre Purity @10":   genre_purity,
+            "Round-trip Symmetry @5": rt_sym_5,
+            "Round-trip Symmetry @10": rt_sym_10,
+            "Embedding Genre Purity @10": genre_purity,
             "Embedding Emotion Purity @10": emotion_purity,
-            "Imagery Coherence @10":        img_coherence,
-            "Query Robustness @10":         robustness,
-            "Query Robustness target":      0.85,
+            "Imagery Coherence @10": img_coherence,
+            "Query Robustness @10": robustness,
+            "Query Robustness target": 0.85,
         },
         f"Genre P@{k_breakdown} per class": genre_per_class,
         f"Emotion P@{k_breakdown} per class": emotion_per_class,
@@ -740,15 +769,20 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate NabatiRetriever")
     parser.add_argument(
-        "--k", nargs="+", type=int, default=[5, 10, 20],
-        help="Values of K for P@K, R@K, NDCG@K (default: 5 10 20)"
+        "--k",
+        nargs="+",
+        type=int,
+        default=[5, 10, 20],
+        help="Values of K for P@K, R@K, NDCG@K (default: 5 10 20)",
     )
     parser.add_argument(
-        "--rebuild-index", action="store_true",
-        help="Force rebuild: re-encode all poems with BERT (slow, ~3 min)"
+        "--rebuild-index",
+        action="store_true",
+        help="Force rebuild: re-encode all poems with BERT (slow, ~3 min)",
     )
     parser.add_argument(
-        "--device", default="cpu",
-        help="Device for BERT encoding when --rebuild-index is used"
+        "--device",
+        default="cpu",
+        help="Device for BERT encoding when --rebuild-index is used",
     )
     main(parser.parse_args())

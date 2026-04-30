@@ -14,22 +14,16 @@ from src.data.labels import (
 from src.evaluation.metrics import emotion_distance, normalize_emotion
 
 
-def map_audio_emotion_to_core(audio_label: str | None, profile: str = "rare_merge_v1") -> str | None:
-    """Map 12-class audio emotion into the adopted core label space."""
-    if not audio_label:
+def _map_emotion_to_core(label: str | None, profile: str = "rare_merge_v1") -> str | None:
+    if not label:
         return None
-    canonical = normalize_emotion(audio_label)
+    canonical = normalize_emotion(label)
     merged = apply_emotion_merge(canonical, profile)
     return merged if merged in get_merged_emotion_classes(profile) else None
 
 
-def map_text_emotion_to_core(text_label: str | None, profile: str = "rare_merge_v1") -> str | None:
-    """Map text emotion label into the adopted core label space."""
-    if not text_label:
-        return None
-    canonical = normalize_emotion(text_label)
-    merged = apply_emotion_merge(canonical, profile)
-    return merged if merged in get_merged_emotion_classes(profile) else None
+map_audio_emotion_to_core = _map_emotion_to_core
+map_text_emotion_to_core = _map_emotion_to_core
 
 
 def estimate_genre_emotion_prior(
@@ -51,8 +45,7 @@ def estimate_genre_emotion_prior(
     for genre, genre_counts in counts.items():
         total = sum(genre_counts.values()) + alpha * len(classes)
         priors[genre] = {
-            label: (genre_counts.get(label, 0.0) + alpha) / total
-            for label in classes
+            label: (genre_counts.get(label, 0.0) + alpha) / total for label in classes
         }
     return priors
 
@@ -68,7 +61,10 @@ def apply_genre_constrained(
     expected = set(get_genre_expected_emotions(genre, profile))
     if not expected:
         return probs / max(probs.sum(), 1e-9)
-    masked = np.array([p if label in expected else 0.0 for label, p in zip(labels, probs)], dtype=np.float64)
+    masked = np.array(
+        [p if label in expected else 0.0 for label, p in zip(labels, probs)],
+        dtype=np.float64,
+    )
     if masked.sum() <= 0:
         return probs / max(probs.sum(), 1e-9)
     return masked / masked.sum()
@@ -94,7 +90,9 @@ def apply_genre_prior(
     return weighted / total if total > 0 else probs / max(probs.sum(), 1e-9)
 
 
-def compute_delivery_metadata(final_emotion: str, poem_arousal: str | None) -> dict[str, Any]:
+def compute_delivery_metadata(
+    final_emotion: str, poem_arousal: str | None
+) -> dict[str, Any]:
     """Compute DMS and a delivery nuance tag from final emotion vs aggregated arousal."""
     expected = emotion_to_arousal(final_emotion)
     mismatch = bool(expected and poem_arousal and expected != poem_arousal)
@@ -131,7 +129,11 @@ def _audio_gate_passes(
     expected = set(get_genre_expected_emotions(genre, profile))
     if audio_label in expected:
         return True
-    return any(emotion_distance(audio_label, candidate) <= 1 for candidate in text_candidates if candidate)
+    return any(
+        emotion_distance(audio_label, candidate) <= 1
+        for candidate in text_candidates
+        if candidate
+    )
 
 
 def decide_final_emotion(
@@ -171,7 +173,12 @@ def decide_final_emotion(
         profile=profile,
         tau_audio=tau_audio,
     )
-    if margin < 0.02 and audio_gate and top1_prob < tau_text and audio_aux_label in {top1_label, top2_label}:
+    if (
+        margin < 0.02
+        and audio_gate
+        and top1_prob < tau_text
+        and audio_aux_label in {top1_label, top2_label}
+    ):
         final_label = str(audio_aux_label)
         used_audio = True
         reason = (
@@ -198,7 +205,10 @@ def decide_final_emotion(
         "audio_emotion_gate_passed": audio_gate,
         **delivery,
         "emotion_poem_conditioned_top3": [
-            {"label": labels[int(idx)], "prob": round(float(conditioned_probs[int(idx)]), 6)}
+            {
+                "label": labels[int(idx)],
+                "prob": round(float(conditioned_probs[int(idx)]), 6),
+            }
             for idx in ranked[:3]
         ],
         "emotion_poem_raw_topk": text_summary["poem_emotion_raw_topk"],

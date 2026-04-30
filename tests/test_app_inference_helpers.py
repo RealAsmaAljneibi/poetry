@@ -63,8 +63,9 @@ def test_transcribe_audio_query_falls_back_to_asr_for_external(monkeypatch: pyte
     clip = _first_test_clip()
     external_clip = Path(clip).with_name(f"external_sim_{Path(clip).name}")
 
-    monkeypatch.setattr(app, "load_whisper", lambda device, use_lora=False: ("processor", "model"))
-    monkeypatch.setattr(app, "transcribe", lambda audio_path, processor, model, device: "قصيدة خارجية")
+    import src.ui.app_helpers as _helpers
+    monkeypatch.setattr(_helpers, "load_whisper", lambda device, use_lora=False: ("processor", "model"))
+    monkeypatch.setattr(_helpers, "transcribe", lambda audio_path, processor, model, device: "قصيدة خارجية")
 
     query_text, source = app.transcribe_audio_query(external_clip, device="cpu", use_lora=False)
 

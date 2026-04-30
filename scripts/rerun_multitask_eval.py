@@ -29,11 +29,11 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoConfig, AutoModel, AutoTokenizer
 from sklearn.metrics import f1_score, classification_report
 from loguru import logger
 
@@ -71,19 +71,13 @@ class MultitaskDataset(torch.utils.data.Dataset):
         self.max_seq_len = max_seq_len
         self.samples: list[dict] = []
 
-        encode_emo = (
-            lambda s: encode_emotion_with_profile(s, emotion_merge_profile)
-            if emotion_merge_profile != "none"
-            else lambda s: encode_emotion_with_profile(s, "none")
-        )
-
         skipped = 0
         with open(jsonl_path, encoding="utf-8") as f:
             for line in f:
                 rec = json.loads(line)
                 text = rec.get("text_corrected", "").strip()
                 g_id = encode_genre(rec.get("genre_en", ""))
-                e_id = encode_emo(rec.get("emotion_text", ""))
+                e_id = encode_emotion_with_profile(rec.get("emotion_text", ""), emotion_merge_profile)
                 if not text or g_id == -1 or e_id == -1:
                     skipped += 1
                     continue
@@ -132,18 +126,14 @@ class MultitaskModel(nn.Module):
         self, model_name: str, n_genre: int, n_emotion: int, dropout: float = 0.1
     ):
         super().__init__()
-        from transformers import AutoConfig as _AC
-
-        cfg = _AC.from_pretrained(model_name, local_files_only=True)
+        cfg = AutoConfig.from_pretrained(model_name, local_files_only=True)
         cfg.hidden_dropout_prob = dropout
         cfg.attention_probs_dropout_prob = dropout
         self.encoder = AutoModel.from_pretrained(
             model_name, config=cfg, local_files_only=True
         )
         hidden = self.encoder.config.hidden_size  # 768
-        self.genre_head = nn.Sequential(
-            nn.Dropout(dropout), nn.Linear(hidden, n_genre)
-        )
+        self.genre_head = nn.Sequential(nn.Dropout(dropout), nn.Linear(hidden, n_genre))
         self.emotion_head = nn.Sequential(
             nn.Dropout(dropout), nn.Linear(hidden, n_emotion)
         )
@@ -167,8 +157,7 @@ def poem_f1(all_probs, all_true, all_poem_ids, n_classes) -> float:
     p_preds, p_true = [], []
     for pid, probs_list in poem_probs.items():
         avg = [
-            sum(p[i] for p in probs_list) / len(probs_list)
-            for i in range(n_classes)
+            sum(p[i] for p in probs_list) / len(probs_list) for i in range(n_classes)
         ]
         p_preds.append(max(range(n_classes), key=lambda i: avg[i]))
         p_true.append(poem_labels[pid])
@@ -236,7 +225,6 @@ def main():
         f"(profile={EMOTION_MERGE_PROFILE!r})"
     )
 
-    # Verify checkpoint exists
     if not CHECKPOINT_PATH.exists():
         logger.error(f"Checkpoint not found: {CHECKPOINT_PATH}")
         sys.exit(1)
@@ -246,13 +234,11 @@ def main():
     total_p = sum(p.numel() for p in model.parameters())
     logger.info(f"Model: {total_p:,} params")
 
-    # Load checkpoint
     logger.info(f"Loading checkpoint: {CHECKPOINT_PATH}")
     model.load_state_dict(
         torch.load(CHECKPOINT_PATH, map_location=device, weights_only=True)
     )
 
-    # Load test dataset
     test_ds = MultitaskDataset(
         PROJECT_ROOT / "data/processed/test.jsonl",
         tokenizer,
@@ -274,7 +260,6 @@ def main():
         t_poem_ids,
     ) = eval_epoch(model, test_loader, device, n_genre, n_emotion)
 
-    # Poem-level aggregation
     test_g_poem_f1 = poem_f1(g_probs, g_true, t_poem_ids, n_genre)
     test_e_poem_f1 = poem_f1(e_probs, e_true, t_poem_ids, n_emotion)
 
@@ -285,7 +270,6 @@ def main():
         f"TEST emotion: clip F1={test_e_f1:.4f} | poem F1={test_e_poem_f1:.4f}"
     )
 
-    # Classification reports
     e_short = [c.split("(")[0].strip() for c in emotion_classes]
     g_short = [c.split("(")[0].strip() for c in GENRE_CLASSES]
     e_present = sorted(set(e_true))
@@ -311,7 +295,6 @@ def main():
         )
     )
 
-    # Secondary metrics (ECE + Top-2 for emotion)
     e_confs = np.array([max(p) for p in e_probs])
     e_corr = np.array([int(p == t) for p, t in zip(e_preds, e_true)], dtype=float)
     bins = np.linspace(0, 1, 11)
@@ -326,7 +309,6 @@ def main():
         if true in sorted(range(n_emotion), key=lambda i: prob[i], reverse=True)[:2]
     ) / len(e_true)
 
-    # Build report
     report = {
         "run_id": "multitask_reeval_current_split",
         "seed": 42,

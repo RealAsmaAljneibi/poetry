@@ -30,38 +30,43 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-import numpy as np
-import torch
-import torch.nn as nn
 from loguru import logger
-from sklearn.metrics import classification_report, f1_score, confusion_matrix
-from sklearn.utils.class_weight import compute_class_weight
-from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import seaborn as sns
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+from sklearn.metrics import classification_report, f1_score, confusion_matrix
+from sklearn.utils.class_weight import compute_class_weight
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.data.labels import GENRE_CLASSES, merge_genre_label, encode_genre
 from src.training.trainer import (
-    TensorBoardLogger, EarlyStopper, set_seed,
-    get_optimizer, get_scheduler, unfreeze_next_layer_group,
+    TensorBoardLogger,
+    EarlyStopper,
+    set_seed,
+    get_optimizer,
+    get_scheduler,
+    unfreeze_next_layer_group,
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-MODEL_NAME  = "aubmindlab/bert-base-arabertv2"
-MAX_LENGTH  = 512
-DATA_FILE   = Path("data/processed/master_dataset.jsonl")
-OUTPUT_DIR  = Path("outputs/models/arabert_poem")
-REPORT_DIR  = Path("outputs/reports")
-TB_DIR      = Path("outputs/runs")
-SEED        = 42
+MODEL_NAME = "aubmindlab/bert-base-arabertv2"
+MAX_LENGTH = 512
+DATA_FILE = Path("data/processed/master_dataset.jsonl")
+OUTPUT_DIR = Path("outputs/models/arabert_poem")
+REPORT_DIR = Path("outputs/reports")
+TB_DIR = Path("outputs/runs")
+SEED = 42
 NUM_CLASSES = len(GENRE_CLASSES)  # 8
 
 
 # ── Build poem-level records ──────────────────────────────────────────────────
+
 
 def build_poems(jsonl_path: Path) -> list[dict]:
     """
@@ -76,14 +81,16 @@ def build_poems(jsonl_path: Path) -> list[dict]:
             if pid not in raw:
                 raw[pid] = {
                     "poem_id": pid,
-                    "poet":    rec.get("poet_en", ""),
-                    "genre":   merge_genre_label(rec.get("genre_en", "").strip()),
-                    "clips":   [],
+                    "poet": rec.get("poet_en", ""),
+                    "genre": merge_genre_label(rec.get("genre_en", "").strip()),
+                    "clips": [],
                 }
-            raw[pid]["clips"].append({
-                "text":  rec.get("text_corrected", "").strip(),
-                "start": rec.get("start", 0),
-            })
+            raw[pid]["clips"].append(
+                {
+                    "text": rec.get("text_corrected", "").strip(),
+                    "start": rec.get("start", 0),
+                }
+            )
 
     poems = []
     for pid, info in raw.items():
@@ -92,14 +99,16 @@ def build_poems(jsonl_path: Path) -> list[dict]:
         label = encode_genre(info["genre"])
         if not text or label == -1:
             continue
-        poems.append({
-            "poem_id": pid,
-            "poet":    info["poet"],
-            "genre":   info["genre"],
-            "label":   label,
-            "text":    text,
-            "n_clips": len(info["clips"]),
-        })
+        poems.append(
+            {
+                "poem_id": pid,
+                "poet": info["poet"],
+                "genre": info["genre"],
+                "label": label,
+                "text": text,
+                "n_clips": len(info["clips"]),
+            }
+        )
 
     logger.info(f"Built {len(poems)} poem-level records from {jsonl_path.name}")
     token_lengths = [len(text.split()) for p in poems for text in [p["text"]]]
@@ -111,6 +120,7 @@ def build_poems(jsonl_path: Path) -> list[dict]:
 
 
 # ── Poet-disjoint poem-level split ───────────────────────────────────────────
+
 
 def split_poems(poems: list[dict], seed: int = SEED) -> dict[str, list[dict]]:
     """
@@ -131,7 +141,9 @@ def split_poems(poems: list[dict], seed: int = SEED) -> dict[str, list[dict]]:
             shuffled = gpoems[:]
             random.shuffle(shuffled)
             for i, p in enumerate(shuffled):
-                assignment[p["poem_id"]] = "test" if i == 0 else "val" if i == 1 else "train"
+                assignment[p["poem_id"]] = (
+                    "test" if i == 0 else "val" if i == 1 else "train"
+                )
             logger.info(f"  {genre}: {len(gpoems)} poems → stratified random")
             continue
 
@@ -144,9 +156,11 @@ def split_poems(poems: list[dict], seed: int = SEED) -> dict[str, list[dict]]:
             shuffled.sort(key=lambda p: -p["n_clips"])
             n = len(shuffled)
             n_train = max(1, int(0.80 * n))
-            n_val   = max(1, int(0.10 * n))
+            n_val = max(1, int(0.10 * n))
             for i, p in enumerate(shuffled):
-                assignment[p["poem_id"]] = "train" if i < n_train else "val" if i < n_train + n_val else "test"
+                assignment[p["poem_id"]] = (
+                    "train" if i < n_train else "val" if i < n_train + n_val else "test"
+                )
             continue
 
         # Poet-disjoint: assign poets proportionally by clip count
@@ -156,11 +170,17 @@ def split_poems(poems: list[dict], seed: int = SEED) -> dict[str, list[dict]]:
         )
         total = sum(p["n_clips"] for p in gpoems)
         target_train = total * 0.80
-        target_val   = total * 0.10
+        target_val = total * 0.10
         cum = 0
         for poet, ppoems in poets_sorted:
             c = sum(p["n_clips"] for p in ppoems)
-            bucket = "train" if cum < target_train else "val" if cum < target_train + target_val else "test"
+            bucket = (
+                "train"
+                if cum < target_train
+                else "val"
+                if cum < target_train + target_val
+                else "test"
+            )
             for p in ppoems:
                 assignment[p["poem_id"]] = bucket
             cum += c
@@ -175,17 +195,21 @@ def split_poems(poems: list[dict], seed: int = SEED) -> dict[str, list[dict]]:
             genre_dist[p["genre"]] += 1
         logger.info(
             f"{s.upper():5s}: {len(ps):3d} poems  "
-            + "  ".join(f"{g.split('(')[0].strip()[:6]}={n}" for g, n in sorted(genre_dist.items(), key=lambda x: -x[1]))
+            + "  ".join(
+                f"{g.split('(')[0].strip()[:6]}={n}"
+                for g, n in sorted(genre_dist.items(), key=lambda x: -x[1])
+            )
         )
     return splits
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
 
+
 class PoemDataset(Dataset):
     def __init__(self, poems: list[dict], tokenizer, max_length: int = MAX_LENGTH):
-        self.poems      = poems
-        self.tokenizer  = tokenizer
+        self.poems = poems
+        self.tokenizer = tokenizer
         self.max_length = max_length
 
     def __len__(self) -> int:
@@ -193,7 +217,7 @@ class PoemDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         poem = self.poems[idx]
-        enc  = self.tokenizer(
+        enc = self.tokenizer(
             poem["text"],
             max_length=self.max_length,
             padding="max_length",
@@ -201,17 +225,23 @@ class PoemDataset(Dataset):
             return_tensors="pt",
         )
         return {
-            "input_ids":      enc["input_ids"].squeeze(0),
+            "input_ids": enc["input_ids"].squeeze(0),
             "attention_mask": enc["attention_mask"].squeeze(0),
-            "label":          torch.tensor(poem["label"], dtype=torch.long),
-            "poem_id":        poem["poem_id"],
+            "label": torch.tensor(poem["label"], dtype=torch.long),
+            "poem_id": poem["poem_id"],
         }
 
 
 # ── Training / evaluation ─────────────────────────────────────────────────────
 
+
 def train_epoch(
-    model, loader, optimizer, scheduler, criterion, device,
+    model,
+    loader,
+    optimizer,
+    scheduler,
+    criterion,
+    device,
     accum_steps: int = 1,
 ) -> tuple[float, float]:
     model.train()
@@ -220,17 +250,17 @@ def train_epoch(
     optimizer.zero_grad()
 
     for i, batch in enumerate(loader):
-        input_ids      = batch["input_ids"].to(device)
+        input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
-        labels         = batch["label"].to(device)
+        labels = batch["label"].to(device)
 
         logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
-        loss   = criterion(logits, labels) / accum_steps
+        loss = criterion(logits, labels) / accum_steps
         loss.backward()
 
         total_loss += loss.item() * accum_steps
-        n_correct  += (logits.detach().argmax(dim=-1) == labels).sum().item()
-        n_total    += labels.size(0)
+        n_correct += (logits.detach().argmax(dim=-1) == labels).sum().item()
+        n_total += labels.size(0)
 
         is_last = (i + 1) == len(loader)
         if (i + 1) % accum_steps == 0 or is_last:
@@ -243,7 +273,10 @@ def train_epoch(
 
 
 def eval_epoch(
-    model, loader, criterion, device,
+    model,
+    loader,
+    criterion,
+    device,
 ) -> tuple[float, float, float, list, list]:
     model.eval()
     total_loss = 0.0
@@ -251,9 +284,9 @@ def eval_epoch(
 
     with torch.no_grad():
         for batch in loader:
-            input_ids      = batch["input_ids"].to(device)
+            input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-            labels         = batch["label"].to(device)
+            labels = batch["label"].to(device)
 
             logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
             total_loss += criterion(logits, labels).item()
@@ -261,12 +294,13 @@ def eval_epoch(
             all_true.extend(labels.cpu().tolist())
 
     loss = total_loss / max(len(loader), 1)
-    f1   = f1_score(all_true, all_preds, average="macro", zero_division=0)
-    acc  = sum(p == t for p, t in zip(all_preds, all_true)) / max(len(all_true), 1)
+    f1 = f1_score(all_true, all_preds, average="macro", zero_division=0)
+    acc = sum(p == t for p, t in zip(all_preds, all_true)) / max(len(all_true), 1)
     return loss, f1, acc, all_preds, all_true
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main(args):
     set_seed(SEED)
@@ -303,17 +337,20 @@ def main(args):
                 param.requires_grad = False
         hidden = model.config.hidden_size
         model.classifier = nn.Sequential(
-            nn.Linear(hidden, 256), nn.ReLU(), nn.Dropout(0.4),
+            nn.Linear(hidden, 256),
+            nn.ReLU(),
+            nn.Dropout(0.4),
             nn.Linear(256, NUM_CLASSES),
         ).to(device)
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
         logger.info(f"Frozen encoder — trainable: {trainable:,} params")
         optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, model.parameters()),
-            lr=args.lr, weight_decay=0.01,
+            lr=args.lr,
+            weight_decay=0.01,
         )
     else:
-        # Full fine-tune: discriminative LR + gradual unfreezing (Week 4)
+        # Full fine-tune: discriminative LR + gradual unfreezing
         # All layers start unfrozen; unfreeze_next_layer_group toggles layers
         # top-down so the model adapts from task head → embeddings progressively.
         logger.info(
@@ -329,18 +366,24 @@ def main(args):
 
     # ── Datasets + loaders ────────────────────────────────────────────────────
     train_ds = PoemDataset(train_poems, tokenizer)
-    val_ds   = PoemDataset(val_poems,   tokenizer)
-    test_ds  = PoemDataset(test_poems,  tokenizer)
+    val_ds = PoemDataset(val_poems, tokenizer)
+    test_ds = PoemDataset(test_poems, tokenizer)
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,  num_workers=0)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False, num_workers=0)
-    test_loader  = DataLoader(test_ds,  batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=args.batch_size, shuffle=False, num_workers=0
+    )
 
     # ── Class weights + loss ──────────────────────────────────────────────────
     train_labels = [p["label"] for p in train_poems]
-    present_cls  = np.unique(train_labels)
-    weights      = compute_class_weight("balanced", classes=present_cls, y=train_labels)
-    class_w      = np.ones(NUM_CLASSES, dtype=np.float32)
+    present_cls = np.unique(train_labels)
+    weights = compute_class_weight("balanced", classes=present_cls, y=train_labels)
+    class_w = np.ones(NUM_CLASSES, dtype=np.float32)
     for cls, w in zip(present_cls, weights):
         class_w[cls] = w
     class_weights = torch.tensor(class_w).to(device)
@@ -360,8 +403,8 @@ def main(args):
 
     # ── TensorBoard + early stopping ──────────────────────────────────────────
     mode_tag = "frozen" if args.freeze_encoder else "full"
-    tb       = TensorBoardLogger(TB_DIR, f"arabert_poem_{mode_tag}", "genre")
-    early    = EarlyStopper(args.patience, OUTPUT_DIR, f"arabert_poem_{mode_tag}_genre")
+    tb = TensorBoardLogger(TB_DIR, f"arabert_poem_{mode_tag}", "genre")
+    early = EarlyStopper(args.patience, OUTPUT_DIR, f"arabert_poem_{mode_tag}_genre")
 
     # ── Training loop ─────────────────────────────────────────────────────────
     logger.info("=" * 60)
@@ -378,19 +421,27 @@ def main(args):
             unfreeze_next_layer_group(model, epoch, args.unfreeze_every)
 
         tr_loss, tr_acc = train_epoch(
-            model, train_loader, optimizer, scheduler, criterion, device, args.accum_steps
+            model,
+            train_loader,
+            optimizer,
+            scheduler,
+            criterion,
+            device,
+            args.accum_steps,
         )
-        val_loss, val_f1, val_acc, _, _ = eval_epoch(model, val_loader, criterion, device)
+        val_loss, val_f1, val_acc, _, _ = eval_epoch(
+            model, val_loader, criterion, device
+        )
 
         tb.log_epoch(epoch, tr_loss, tr_acc, val_loss, val_f1, val_acc)
         logger.info(
-            f"Epoch {epoch+1:3d}/{args.epochs} | "
+            f"Epoch {epoch + 1:3d}/{args.epochs} | "
             f"train_loss={tr_loss:.4f} | train_acc={tr_acc:.3f} | "
             f"val_loss={val_loss:.4f} | val_F1={val_f1:.4f} | val_acc={val_acc:.3f}"
         )
 
         if early.step(val_f1, model):
-            logger.info(f"Early stopping at epoch {epoch+1}")
+            logger.info(f"Early stopping at epoch {epoch + 1}")
             break
         best_val_f1 = max(best_val_f1, val_f1)
 
@@ -409,7 +460,8 @@ def main(args):
     short = [c.split("(")[0].strip() for c in GENRE_CLASSES]
     present_ids = sorted(set(test_true))
     report = classification_report(
-        test_true, test_preds,
+        test_true,
+        test_preds,
         labels=present_ids,
         target_names=[short[i] for i in present_ids],
         zero_division=0,
@@ -419,11 +471,17 @@ def main(args):
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     (REPORT_DIR / f"arabert_poem_{mode_tag}_genre_report.txt").write_text(report)
 
-    # Confusion matrix
     cm = confusion_matrix(test_true, test_preds, labels=list(range(NUM_CLASSES)))
     fig, ax = plt.subplots(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=short, yticklabels=short, ax=ax)
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=short,
+        yticklabels=short,
+        ax=ax,
+    )
     ax.set_xlabel("Predicted")
     ax.set_ylabel("True")
     ax.set_title(f"AraBERT Poem [{mode_tag}] — Macro-F1={test_f1:.3f}")
@@ -434,43 +492,48 @@ def main(args):
     plt.close(fig)
     logger.info(f"Confusion matrix → {fig_path}")
 
-    logger.success(
-        f"Done. Best val F1={best_val_f1:.4f}  test F1={test_f1:.4f}"
-    )
+    logger.success(f"Done. Best val F1={best_val_f1:.4f}  test F1={test_f1:.4f}")
     tb.close()
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     logger.add("logs/train_poem.log", rotation="10 MB")
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--freeze-encoder", action="store_true",
-        help="Freeze BERT encoder; train only classification head (feature extraction mode)."
+        "--freeze-encoder",
+        action="store_true",
+        help="Freeze BERT encoder; train only classification head (feature extraction mode).",
+    )
+    parser.add_argument("--epochs", type=int, default=30, help="Max training epochs")
+    parser.add_argument(
+        "--patience", type=int, default=10, help="Early stopping patience"
     )
     parser.add_argument(
-        "--epochs",   type=int,   default=30,   help="Max training epochs"
+        "--lr", type=float, default=2e-5, help="Base (top-layer) learning rate"
     )
     parser.add_argument(
-        "--patience", type=int,   default=10,   help="Early stopping patience"
+        "--disc-decay",
+        type=float,
+        default=0.9,
+        help="Discriminative LR decay per layer (0.9 → lower layers get 0.9^depth × base_lr)",
     )
     parser.add_argument(
-        "--lr",       type=float, default=2e-5, help="Base (top-layer) learning rate"
+        "--unfreeze-every",
+        type=int,
+        default=2,
+        help="Gradual unfreezing: unfreeze 1 more encoder layer every N epochs (full fine-tune only)",
     )
     parser.add_argument(
-        "--disc-decay", type=float, default=0.9,
-        help="Discriminative LR decay per layer (0.9 → lower layers get 0.9^depth × base_lr)"
+        "--batch-size",
+        type=int,
+        default=4,
+        help="Batch size (small due to 512-token poems)",
     )
     parser.add_argument(
-        "--unfreeze-every", type=int, default=2,
-        help="Gradual unfreezing: unfreeze 1 more encoder layer every N epochs (full fine-tune only)"
-    )
-    parser.add_argument(
-        "--batch-size",  type=int, default=4,  help="Batch size (small due to 512-token poems)"
-    )
-    parser.add_argument(
-        "--accum-steps", type=int, default=4,  help="Gradient accumulation steps (eff. batch = batch × accum)"
+        "--accum-steps",
+        type=int,
+        default=4,
+        help="Gradient accumulation steps (eff. batch = batch × accum)",
     )
     args = parser.parse_args()
     main(args)

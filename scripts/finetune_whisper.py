@@ -30,14 +30,8 @@ DATA PROTOCOL (non-negotiable):
   • text_whisper is a REFERENCE baseline, never a model input
 
 Architecture:
-  • whisper-small (241.7M) — approved exception 2026-03-02
+  • whisper-small (241.7M — largest; within 500M total)
   • LoRA: ~1.77M trainable (rank=16, q_proj+v_proj)
-
-Course techniques:
-  • LR warmup + cosine decay    (Week 2)
-  • Label smoothing             (Week 3)
-  • Gradient accumulation + clipping (Week 4 SSL lab)
-  • TensorBoard, Pydantic config, structured eval (Week 5)
 
 Usage:
     # Recommended: full train split, balanced sampler, LoRA
@@ -58,6 +52,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
+
+import random
 
 import librosa
 import numpy as np
@@ -93,17 +89,20 @@ try:
     def compute_cer(refs: list[str], hyps: list[str]) -> float:
         return float(_jiwer_cer(refs, hyps))
 except ImportError:
+
     def compute_wer(refs, hyps):
         logger.warning("jiwer not installed — WER unavailable")
         return float("nan")
+
     def compute_cer(refs, hyps):
         logger.warning("jiwer not installed — CER unavailable")
         return float("nan")
 
+
 # ── Constants ──────────────────────────────────────────────────────────────────
-PROJECT_ROOT    = Path(__file__).parent.parent
-SAMPLING_RATE   = 16_000
-MAX_AUDIO_SECS  = 30
+PROJECT_ROOT = Path(__file__).parent.parent
+SAMPLING_RATE = 16_000
+MAX_AUDIO_SECS = 30
 FEATURE_MAX_LEN = MAX_AUDIO_SECS * SAMPLING_RATE
 
 
@@ -115,11 +114,12 @@ FEATURE_MAX_LEN = MAX_AUDIO_SECS * SAMPLING_RATE
 # 1a. SPEC-AUGMENT
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def apply_spec_augment(
     features: np.ndarray,
-    n_time_masks:  int = 2,
+    n_time_masks: int = 2,
     time_mask_max: int = 80,
-    n_freq_masks:  int = 2,
+    n_freq_masks: int = 2,
     freq_mask_max: int = 20,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
@@ -144,13 +144,13 @@ def apply_spec_augment(
     for _ in range(n_freq_masks):
         f = int(rng.integers(0, freq_mask_max + 1))
         f0 = int(rng.integers(0, max(1, n_mels - f)))
-        x[f0: f0 + f, :] = 0.0
+        x[f0 : f0 + f, :] = 0.0
 
     # Time masking
     for _ in range(n_time_masks):
         t = int(rng.integers(0, time_mask_max + 1))
         t0 = int(rng.integers(0, max(1, n_frames - t)))
-        x[:, t0: t0 + t] = 0.0
+        x[:, t0 : t0 + t] = 0.0
 
     return x
 
@@ -180,25 +180,25 @@ class NabatiASRDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        jsonl_path:     Path,
-        processor:      WhisperProcessor,
+        jsonl_path: Path,
+        processor: WhisperProcessor,
         corrected_only: bool = False,
-        speed_factors:  Sequence[float] | None = None,
-        spec_augment:   bool = False,
+        speed_factors: Sequence[float] | None = None,
+        spec_augment: bool = False,
         spec_time_masks: int = 2,
-        spec_time_max:   int = 80,
+        spec_time_max: int = 80,
         spec_freq_masks: int = 2,
-        spec_freq_max:   int = 20,
+        spec_freq_max: int = 20,
         source_name: str = "nabati",
     ):
         self.processor = processor
         self.records: list[dict] = []
-        self.speed_factors   = tuple(float(x) for x in (speed_factors or (1.0,)))
-        self.spec_augment    = spec_augment
+        self.speed_factors = tuple(float(x) for x in (speed_factors or (1.0,)))
+        self.spec_augment = spec_augment
         self.spec_time_masks = spec_time_masks
-        self.spec_time_max   = spec_time_max
+        self.spec_time_max = spec_time_max
         self.spec_freq_masks = spec_freq_masks
-        self.spec_freq_max   = spec_freq_max
+        self.spec_freq_max = spec_freq_max
         self._rng = np.random.default_rng()
 
         n_correct = 0
@@ -209,9 +209,9 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             if not line.strip():
                 continue
             rec = json.loads(line)
-            audio_path     = Path(rec.get("audio_filename", ""))
+            audio_path = Path(rec.get("audio_filename", ""))
             text_corrected = (rec.get("text_corrected") or "").strip()
-            text_whisper   = (rec.get("text_whisper")   or "").strip()
+            text_whisper = (rec.get("text_whisper") or "").strip()
             audio_offset_sec = float(rec.get("audio_offset_sec") or 0.0)
             audio_duration_sec = rec.get("audio_duration_sec")
             if audio_duration_sec is not None:
@@ -220,7 +220,7 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             if not audio_path.exists() or not text_corrected:
                 continue
 
-            is_correct = (text_whisper == text_corrected)
+            is_correct = text_whisper == text_corrected
 
             if corrected_only and is_correct:
                 continue
@@ -228,20 +228,26 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             for speed_factor in self.speed_factors:
                 effective_duration_sec = (
                     (audio_duration_sec / speed_factor)
-                    if audio_duration_sec is not None else None
+                    if audio_duration_sec is not None
+                    else None
                 )
-                if effective_duration_sec is not None and effective_duration_sec > MAX_AUDIO_SECS:
+                if (
+                    effective_duration_sec is not None
+                    and effective_duration_sec > MAX_AUDIO_SECS
+                ):
                     n_skipped_overlong += 1
                     continue
-                self.records.append({
-                    "audio_path":     audio_path,
-                    "audio_offset_sec": audio_offset_sec,
-                    "audio_duration_sec": audio_duration_sec,
-                    "text_corrected": text_corrected,
-                    "is_correct":     is_correct,
-                    "speed_factor":   speed_factor,
-                    "source_name":    source_name,
-                })
+                self.records.append(
+                    {
+                        "audio_path": audio_path,
+                        "audio_offset_sec": audio_offset_sec,
+                        "audio_duration_sec": audio_duration_sec,
+                        "text_corrected": text_corrected,
+                        "is_correct": is_correct,
+                        "speed_factor": speed_factor,
+                        "source_name": source_name,
+                    }
+                )
             if is_correct:
                 n_correct += 1
             else:
@@ -252,7 +258,11 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             f"{n_correct} already-correct, {n_incorrect} needs-correction"
             + (f" | speed={self.speed_factors}" if self.speed_factors != (1.0,) else "")
             + (" | SpecAugment=ON" if self.spec_augment else "")
-            + (f" | skipped_overlong={n_skipped_overlong}" if n_skipped_overlong else "")
+            + (
+                f" | skipped_overlong={n_skipped_overlong}"
+                if n_skipped_overlong
+                else ""
+            )
         )
         if corrected_only:
             logger.warning(
@@ -282,27 +292,30 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             )
 
         inputs = self.processor.feature_extractor(
-            audio, sampling_rate=SAMPLING_RATE, return_tensors="np",
+            audio,
+            sampling_rate=SAMPLING_RATE,
+            return_tensors="np",
         )
-        feats = inputs.input_features[0]   # shape (80, 3000)
+        feats = inputs.input_features[0]  # shape (80, 3000)
 
         if self.spec_augment:
             feats = apply_spec_augment(
                 feats,
-                n_time_masks  = self.spec_time_masks,
-                time_mask_max = self.spec_time_max,
-                n_freq_masks  = self.spec_freq_masks,
-                freq_mask_max = self.spec_freq_max,
-                rng           = self._rng,
+                n_time_masks=self.spec_time_masks,
+                time_mask_max=self.spec_time_max,
+                n_freq_masks=self.spec_freq_masks,
+                freq_mask_max=self.spec_freq_max,
+                rng=self._rng,
             )
 
         labels = self.processor.tokenizer(
-            rec["text_corrected"], return_tensors="np",
+            rec["text_corrected"],
+            return_tensors="np",
         ).input_ids[0]
 
         return {
             "input_features": feats,
-            "labels":         labels,
+            "labels": labels,
         }
 
     def make_balanced_sampler(self, mix_ratio: float = 0.5) -> WeightedRandomSampler:
@@ -314,10 +327,10 @@ class NabatiASRDataset(torch.utils.data.Dataset):
         This prevents the model from learning "always correct" (forgetting) or
         "always fix" (over-correction). Both error types are equally represented.
         """
-        correct_idx   = [i for i, r in enumerate(self.records) if r["is_correct"]]
+        correct_idx = [i for i, r in enumerate(self.records) if r["is_correct"]]
         incorrect_idx = [i for i, r in enumerate(self.records) if not r["is_correct"]]
 
-        n_correct   = len(correct_idx)
+        n_correct = len(correct_idx)
         n_incorrect = len(incorrect_idx)
 
         if n_correct == 0 or n_incorrect == 0:
@@ -328,7 +341,7 @@ class NabatiASRDataset(torch.utils.data.Dataset):
         # weight_correct * n_correct  = mix_ratio * N
         # weight_incorrect * n_incorrect = (1-mix_ratio) * N
         N = len(self.records)
-        w_correct   = (mix_ratio   * N) / n_correct
+        w_correct = (mix_ratio * N) / n_correct
         w_incorrect = ((1 - mix_ratio) * N) / n_incorrect
 
         weights = torch.zeros(N)
@@ -369,15 +382,18 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             raise ValueError("primary_ratio must be in (0, 1) for replay sampling.")
 
         primary_correct_idx = [
-            i for i, r in enumerate(self.records)
+            i
+            for i, r in enumerate(self.records)
             if r.get("source_name") == primary_source and r.get("is_correct")
         ]
         primary_incorrect_idx = [
-            i for i, r in enumerate(self.records)
+            i
+            for i, r in enumerate(self.records)
             if r.get("source_name") == primary_source and not r.get("is_correct")
         ]
         replay_idx = [
-            i for i, r in enumerate(self.records)
+            i
+            for i, r in enumerate(self.records)
             if r.get("source_name") == replay_source
         ]
 
@@ -387,7 +403,9 @@ class NabatiASRDataset(torch.utils.data.Dataset):
         n_primary = n_primary_correct + n_primary_incorrect
 
         if n_primary == 0 or n_replay == 0:
-            logger.warning("Replay sampler requested but one domain is empty — replay disabled.")
+            logger.warning(
+                "Replay sampler requested but one domain is empty — replay disabled."
+            )
             return None
 
         N = len(self.records)
@@ -400,8 +418,12 @@ class NabatiASRDataset(torch.utils.data.Dataset):
             and n_primary_correct > 0
             and n_primary_incorrect > 0
         ):
-            w_primary_correct = (primary_ratio * primary_correct_ratio * N) / n_primary_correct
-            w_primary_incorrect = (primary_ratio * (1.0 - primary_correct_ratio) * N) / n_primary_incorrect
+            w_primary_correct = (
+                primary_ratio * primary_correct_ratio * N
+            ) / n_primary_correct
+            w_primary_incorrect = (
+                primary_ratio * (1.0 - primary_correct_ratio) * N
+            ) / n_primary_incorrect
             for i in primary_correct_idx:
                 weights[i] = w_primary_correct
             for i in primary_incorrect_idx:
@@ -440,14 +462,18 @@ class NabatiASRDataset(torch.utils.data.Dataset):
 # 2. DATA COLLATOR
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class DataCollatorSpeechSeq2Seq:
     """Pads features and labels; labels use -100 for padding (ignored by loss)."""
+
     processor: WhisperProcessor
 
     def __call__(self, features: list[dict]) -> dict[str, torch.Tensor]:
         input_features = [{"input_features": f["input_features"]} for f in features]
-        batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
+        batch = self.processor.feature_extractor.pad(
+            input_features, return_tensors="pt"
+        )
 
         label_features = [{"input_ids": f["labels"]} for f in features]
         labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
@@ -465,6 +491,7 @@ class DataCollatorSpeechSeq2Seq:
 # 3. LoRA SETUP
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def apply_lora(
     model,
     rank: int,
@@ -476,17 +503,17 @@ def apply_lora(
     from peft import LoraConfig, TaskType, get_peft_model
 
     lora_config = LoraConfig(
-        task_type      = TaskType.SEQ_2_SEQ_LM,
-        r              = rank,
-        lora_alpha     = alpha,
-        lora_dropout   = dropout,
-        target_modules = target_mods,
-        bias           = "none",
+        task_type=TaskType.SEQ_2_SEQ_LM,
+        r=rank,
+        lora_alpha=alpha,
+        lora_dropout=dropout,
+        target_modules=target_mods,
+        bias="none",
     )
     model = get_peft_model(model, lora_config)
     trainable, total = model.get_nb_trainable_parameters()
     logger.info(
-        f"  LoRA: trainable={trainable/1e6:.2f}M / {total/1e6:.1f}M  "
+        f"  LoRA: trainable={trainable / 1e6:.2f}M / {total / 1e6:.1f}M  "
         f"rank={rank}  alpha={alpha}  targets={target_mods}"
     )
     return model
@@ -512,7 +539,9 @@ def resolve_lora_targets(
             f"No decoder attention modules matched requested LoRA targets: {requested_targets}"
         )
 
-    logger.info(f"  Decoder-only LoRA: targeting {len(matched)} decoder projection modules")
+    logger.info(
+        f"  Decoder-only LoRA: targeting {len(matched)} decoder projection modules"
+    )
     return matched
 
 
@@ -552,6 +581,7 @@ def load_whisper_assets(model_name: str, language: str):
 # 4. BALANCED TRAINER
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 class BalancedSeq2SeqTrainer(Seq2SeqTrainer):
     """
     Seq2SeqTrainer subclass that injects a WeightedRandomSampler so each
@@ -562,6 +592,7 @@ class BalancedSeq2SeqTrainer(Seq2SeqTrainer):
     (1887 clips) and 30% already-correct (782 clips), which still risks mild
     over-correction bias. With mix_ratio=0.5, both types appear equally.
     """
+
     def __init__(self, *args, balanced_sampler=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._balanced_sampler = balanced_sampler
@@ -571,19 +602,21 @@ class BalancedSeq2SeqTrainer(Seq2SeqTrainer):
             return super().get_train_dataloader()
 
         from torch.utils.data import DataLoader
+
         return DataLoader(
             self.train_dataset,
-            batch_size  = self.args.per_device_train_batch_size,
-            sampler     = self._balanced_sampler,
-            collate_fn  = self.data_collator,
-            num_workers = self.args.dataloader_num_workers,
-            pin_memory  = self.args.dataloader_pin_memory,
+            batch_size=self.args.per_device_train_batch_size,
+            sampler=self._balanced_sampler,
+            collate_fn=self.data_collator,
+            num_workers=self.args.dataloader_num_workers,
+            pin_memory=self.args.dataloader_pin_memory,
         )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 5. OCR CALLBACK
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 class OCRCallback(TrainerCallback):
     """
@@ -603,16 +636,16 @@ class OCRCallback(TrainerCallback):
 
     def __init__(
         self,
-        processor:      WhisperProcessor,
-        val_jsonl:      Path,
-        device:         str,
-        ocr_threshold:  float = 0.15,
+        processor: WhisperProcessor,
+        val_jsonl: Path,
+        device: str,
+        ocr_threshold: float = 0.15,
         ocr_wer_threshold: float = 0.10,
         ocr_cer_threshold: float = 0.05,
         stop_on_threshold: bool = False,
     ):
-        self.processor     = processor
-        self.device        = device
+        self.processor = processor
+        self.device = device
         self.ocr_threshold = ocr_threshold
         self.ocr_wer_threshold = ocr_wer_threshold
         self.ocr_cer_threshold = ocr_cer_threshold
@@ -624,7 +657,7 @@ class OCRCallback(TrainerCallback):
             if not line.strip():
                 continue
             rec = json.loads(line)
-            tw = (rec.get("text_whisper")   or "").strip()
+            tw = (rec.get("text_whisper") or "").strip()
             tc = (rec.get("text_corrected") or "").strip()
             ap = Path(rec.get("audio_filename", ""))
             offset_sec = float(rec.get("audio_offset_sec") or 0.0)
@@ -632,12 +665,14 @@ class OCRCallback(TrainerCallback):
             if duration_sec is not None:
                 duration_sec = float(duration_sec)
             if tw == tc and tc and ap.exists():
-                self.correct_clips.append({
-                    "audio_path": ap,
-                    "audio_offset_sec": offset_sec,
-                    "audio_duration_sec": duration_sec,
-                    "text_corrected": tc,
-                })
+                self.correct_clips.append(
+                    {
+                        "audio_path": ap,
+                        "audio_offset_sec": offset_sec,
+                        "audio_duration_sec": duration_sec,
+                        "text_corrected": tc,
+                    }
+                )
 
         logger.info(
             f"OCRCallback: monitoring {len(self.correct_clips)} "
@@ -742,25 +777,38 @@ class BaselineWERGateCallback(TrainerCallback):
 # 6. METRICS
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def make_compute_metrics(tokenizer, cfg: ASRConfig):
     """Returns compute_metrics closure for Seq2SeqTrainer (WER + CER + Soft-CER)."""
 
     def compute_metrics(pred) -> dict[str, float]:
-        pred_ids  = pred.predictions
+        pred_ids = pred.predictions
         label_ids = pred.label_ids.copy()
         label_ids[label_ids == -100] = tokenizer.pad_token_id
 
-        hyps = [s.strip() for s in tokenizer.batch_decode(pred_ids,  skip_special_tokens=True)]
-        refs = [s.strip() for s in tokenizer.batch_decode(label_ids, skip_special_tokens=True)]
+        hyps = [
+            s.strip()
+            for s in tokenizer.batch_decode(pred_ids, skip_special_tokens=True)
+        ]
+        refs = [
+            s.strip()
+            for s in tokenizer.batch_decode(label_ids, skip_special_tokens=True)
+        ]
 
-        val_wer      = compute_wer(refs, hyps)
-        val_cer      = compute_cer(refs, hyps)
-        val_soft_cer = float(np.mean([compute_soft_cer(h, r) for h, r in zip(hyps, refs)]))
+        val_wer = compute_wer(refs, hyps)
+        val_cer = compute_cer(refs, hyps)
+        val_soft_cer = float(
+            np.mean([compute_soft_cer(h, r) for h, r in zip(hyps, refs)])
+        )
 
         if val_wer > cfg.wer_warn_threshold:
-            logger.warning(f"  val WER={val_wer:.3f} > threshold {cfg.wer_warn_threshold}")
+            logger.warning(
+                f"  val WER={val_wer:.3f} > threshold {cfg.wer_warn_threshold}"
+            )
         if val_cer > cfg.cer_warn_threshold:
-            logger.warning(f"  val CER={val_cer:.3f} > threshold {cfg.cer_warn_threshold}")
+            logger.warning(
+                f"  val CER={val_cer:.3f} > threshold {cfg.cer_warn_threshold}"
+            )
 
         logger.info(
             f"  val WER={val_wer:.4f}  CER={val_cer:.4f}  "
@@ -775,6 +823,7 @@ def make_compute_metrics(tokenizer, cfg: ASRConfig):
 # 7. BASELINE EVALUATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def evaluate_baseline(jsonl_path: Path) -> dict[str, float]:
     """WER/CER/Soft-CER of vanilla Whisper-small from stored text_whisper field."""
     refs, hyps = [], []
@@ -783,18 +832,25 @@ def evaluate_baseline(jsonl_path: Path) -> dict[str, float]:
             continue
         rec = json.loads(line)
         ref = (rec.get("text_corrected") or "").strip()
-        hyp = (rec.get("text_whisper")   or "").strip()
+        hyp = (rec.get("text_whisper") or "").strip()
         if ref and hyp:
             refs.append(ref)
             hyps.append(hyp)
 
     if not refs:
-        return {"wer": float("nan"), "cer": float("nan"), "soft_cer": float("nan"), "n": 0}
+        return {
+            "wer": float("nan"),
+            "cer": float("nan"),
+            "soft_cer": float("nan"),
+            "n": 0,
+        }
 
     return {
-        "wer":      compute_wer(refs, hyps),
-        "cer":      compute_cer(refs, hyps),
-        "soft_cer": float(np.mean([compute_soft_cer(h, r) for h, r in zip(hyps, refs)])),
+        "wer": compute_wer(refs, hyps),
+        "cer": compute_cer(refs, hyps),
+        "soft_cer": float(
+            np.mean([compute_soft_cer(h, r) for h, r in zip(hyps, refs)])
+        ),
         "n": len(refs),
     }
 
@@ -811,6 +867,7 @@ def resolve_jsonl_arg(raw_path: str) -> Path:
 # 8. ARGUMENT PARSING
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
@@ -821,15 +878,27 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── Model ─────────────────────────────────────────────────────────────────
-    p.add_argument("--model", default="openai/whisper-small",
-                   help="whisper-small=241.7M (approved exception 2026-03-02). "
-                        "Do NOT use whisper-medium or larger.")
-    p.add_argument("--train-jsonl", default="data/processed/train.jsonl",
-                   help="Training split JSONL. Override for SADA or other curricula.")
-    p.add_argument("--val-jsonl", default="data/processed/val.jsonl",
-                   help="Validation split JSONL.")
-    p.add_argument("--test-jsonl", default="data/processed/test.jsonl",
-                   help="Held-out evaluation JSONL.")
+    p.add_argument(
+        "--model",
+        default="openai/whisper-small",
+        help="whisper-small=241.7M (largest; within 500M total). "
+        "Do NOT use whisper-medium or larger.",
+    )
+    p.add_argument(
+        "--train-jsonl",
+        default="data/processed/train.jsonl",
+        help="Training split JSONL. Override for SADA or other curricula.",
+    )
+    p.add_argument(
+        "--val-jsonl",
+        default="data/processed/val.jsonl",
+        help="Validation split JSONL.",
+    )
+    p.add_argument(
+        "--test-jsonl",
+        default="data/processed/test.jsonl",
+        help="Held-out evaluation JSONL.",
+    )
     p.add_argument(
         "--replay-jsonl",
         default=None,
@@ -849,11 +918,11 @@ def parse_args() -> argparse.Namespace:
     )
 
     # ── LoRA ──────────────────────────────────────────────────────────────────
-    p.add_argument("--use-lora",     action="store_true")
-    p.add_argument("--lora-rank",    type=int,   default=16)
-    p.add_argument("--lora-alpha",   type=int,   default=32)
+    p.add_argument("--use-lora", action="store_true")
+    p.add_argument("--lora-rank", type=int, default=16)
+    p.add_argument("--lora-alpha", type=int, default=32)
     p.add_argument("--lora-dropout", type=float, default=0.05)
-    p.add_argument("--lora-targets", nargs="+",  default=["q_proj", "v_proj"])
+    p.add_argument("--lora-targets", nargs="+", default=["q_proj", "v_proj"])
     p.add_argument(
         "--decoder-only-lora",
         action="store_true",
@@ -881,23 +950,48 @@ def parse_args() -> argparse.Namespace:
             "Applied to train set only; val/test are not augmented."
         ),
     )
-    p.add_argument("--spec-time-masks", type=int, default=2,
-                   help="Number of time masks for SpecAugment (default: 2).")
-    p.add_argument("--spec-time-max",   type=int, default=80,
-                   help="Max time frames masked per mask for SpecAugment (default: 80 ≈ 0.8s).")
-    p.add_argument("--spec-freq-masks", type=int, default=2,
-                   help="Number of frequency masks for SpecAugment (default: 2).")
-    p.add_argument("--spec-freq-max",   type=int, default=20,
-                   help="Max frequency bins masked per mask for SpecAugment (default: 20/80 bins).")
+    p.add_argument(
+        "--spec-time-masks",
+        type=int,
+        default=2,
+        help="Number of time masks for SpecAugment (default: 2).",
+    )
+    p.add_argument(
+        "--spec-time-max",
+        type=int,
+        default=80,
+        help="Max time frames masked per mask for SpecAugment (default: 80 ≈ 0.8s).",
+    )
+    p.add_argument(
+        "--spec-freq-masks",
+        type=int,
+        default=2,
+        help="Number of frequency masks for SpecAugment (default: 2).",
+    )
+    p.add_argument(
+        "--spec-freq-max",
+        type=int,
+        default=20,
+        help="Max frequency bins masked per mask for SpecAugment (default: 20/80 bins).",
+    )
 
     # ── Training ──────────────────────────────────────────────────────────────
-    p.add_argument("--epochs",        type=int,   default=5,
-                   help="Fewer epochs + early stopping avoids overfitting on 2669 clips.")
-    p.add_argument("--batch-size",    type=int,   default=4)
-    p.add_argument("--grad-accum",    type=int,   default=8,
-                   help="Effective batch = 4×8=32.")
-    p.add_argument("--learning-rate", type=float, default=1e-5,
-                   help="1e-5 (not 1e-4): lower LR preserves Whisper's existing Arabic knowledge.")
+    p.add_argument(
+        "--epochs",
+        type=int,
+        default=5,
+        help="Fewer epochs + early stopping avoids overfitting on 2669 clips.",
+    )
+    p.add_argument("--batch-size", type=int, default=4)
+    p.add_argument(
+        "--grad-accum", type=int, default=8, help="Effective batch = 4×8=32."
+    )
+    p.add_argument(
+        "--learning-rate",
+        type=float,
+        default=1e-5,
+        help="1e-5 (not 1e-4): lower LR preserves Whisper's existing Arabic knowledge.",
+    )
     p.add_argument(
         "--optimizer",
         choices=["adamw_torch", "adafactor"],
@@ -906,41 +1000,80 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--lr-scheduler-type",
-        choices=["cosine", "linear", "constant", "constant_with_warmup", "cosine_with_restarts", "polynomial"],
+        choices=[
+            "cosine",
+            "linear",
+            "constant",
+            "constant_with_warmup",
+            "cosine_with_restarts",
+            "polynomial",
+        ],
         default="cosine",
         help="Learning-rate scheduler family.",
     )
-    p.add_argument("--weight-decay", type=float, default=0.01,
-                   help="Weight decay / L2 regularization strength.")
-    p.add_argument("--warmup-ratio",  type=float, default=0.15,
-                   help="15%% warmup: more warmup steps → smoother adaptation.")
-    p.add_argument("--max-grad-norm", type=float, default=1.0,
-                   help="Gradient clipping. Prevents large updates from corrupting weights.")
-    p.add_argument("--patience",      type=int,   default=2,
-                   help="Early stop on val Soft-CER. Patience=2 stops quickly on regression.")
+    p.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.01,
+        help="Weight decay / L2 regularization strength.",
+    )
+    p.add_argument(
+        "--warmup-ratio",
+        type=float,
+        default=0.15,
+        help="15%% warmup: more warmup steps → smoother adaptation.",
+    )
+    p.add_argument(
+        "--max-grad-norm",
+        type=float,
+        default=1.0,
+        help="Gradient clipping. Prevents large updates from corrupting weights.",
+    )
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=2,
+        help="Early stop on val Soft-CER. Patience=2 stops quickly on regression.",
+    )
     p.add_argument("--label-smoothing", type=float, default=0.0)
-    p.add_argument("--mix-ratio",     type=float, default=0.5,
-                   help="Fraction of already-correct clips per batch (balanced sampler). "
-                        "0.5=50/50, 0.0=disable balanced sampler.")
-    p.add_argument("--ocr-threshold", type=float, default=0.15,
-                   help="Warn if Over-Correction Rate exceeds this on val.")
-    p.add_argument("--ocr-wer-threshold", type=float, default=0.10,
-                   help="Treat a previously-correct clip as still acceptable if WER stays at or below this threshold.")
-    p.add_argument("--ocr-cer-threshold", type=float, default=0.05,
-                   help="Treat a previously-correct clip as still acceptable if CER stays at or below this threshold.")
+    p.add_argument(
+        "--mix-ratio",
+        type=float,
+        default=0.5,
+        help="Fraction of already-correct clips per batch (balanced sampler). "
+        "0.5=50/50, 0.0=disable balanced sampler.",
+    )
+    p.add_argument(
+        "--ocr-threshold",
+        type=float,
+        default=0.15,
+        help="Warn if Over-Correction Rate exceeds this on val.",
+    )
+    p.add_argument(
+        "--ocr-wer-threshold",
+        type=float,
+        default=0.10,
+        help="Treat a previously-correct clip as still acceptable if WER stays at or below this threshold.",
+    )
+    p.add_argument(
+        "--ocr-cer-threshold",
+        type=float,
+        default=0.05,
+        help="Treat a previously-correct clip as still acceptable if CER stays at or below this threshold.",
+    )
     p.add_argument(
         "--stop-on-ocr",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Stop training immediately when OCR exceeds --ocr-threshold (default: on). "
-             "Use --no-stop-on-ocr to disable (not recommended).",
+        "Use --no-stop-on-ocr to disable (not recommended).",
     )
     p.add_argument(
         "--wer-delta-gate",
         type=float,
         default=0.05,
         help="Stop training if val WER exceeds the zero-shot baseline by more than this amount "
-             "(default: 0.05). Set to a large value (e.g. 99) to disable.",
+        "(default: 0.05). Set to a large value (e.g. 99) to disable.",
     )
     p.add_argument(
         "--best-model-metric",
@@ -948,25 +1081,37 @@ def parse_args() -> argparse.Namespace:
         default="wer",
         help="Validation metric used to select the best checkpoint.",
     )
-    p.add_argument("--eval-steps", type=int, default=100,
-                   help="Evaluate every N optimizer steps instead of only once per epoch.")
-    p.add_argument("--save-steps", type=int, default=100,
-                   help="Save checkpoints every N optimizer steps.")
+    p.add_argument(
+        "--eval-steps",
+        type=int,
+        default=100,
+        help="Evaluate every N optimizer steps instead of only once per epoch.",
+    )
+    p.add_argument(
+        "--save-steps",
+        type=int,
+        default=100,
+        help="Save checkpoints every N optimizer steps.",
+    )
 
     # ── Ablation: corrected-only (DISABLED BY DEFAULT — causes regression) ────
-    p.add_argument("--corrected-only", action="store_true",
-                   help="ABLATION ONLY: train on dialect-gap clips only. "
-                        "Known to cause catastrophic forgetting (WER 0.272→0.589 on fixed split). "
-                        "Do not use for main training.")
+    p.add_argument(
+        "--corrected-only",
+        action="store_true",
+        help="ABLATION ONLY: train on dialect-gap clips only. "
+        "Known to cause catastrophic forgetting (WER 0.272→0.589 on fixed split). "
+        "Do not use for main training.",
+    )
 
     p.add_argument("--output-dir", default="outputs/models/whisper_nabati")
-    p.add_argument("--seed",       type=int, default=42)
+    p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 9. MAIN
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def main() -> None:
     args = parse_args()
@@ -975,7 +1120,9 @@ def main() -> None:
     if args.decoder_only_lora and not args.use_lora:
         raise ValueError("--decoder-only-lora requires --use-lora")
     if args.save_steps % args.eval_steps != 0:
-        raise ValueError("--save-steps must be a multiple of --eval-steps when load_best_model_at_end=True")
+        raise ValueError(
+            "--save-steps must be a multiple of --eval-steps when load_best_model_at_end=True"
+        )
     if not (0.0 <= args.replay_ratio < 1.0):
         raise ValueError("--replay-ratio must be in [0, 1).")
     if args.replay_ratio > 0.0 and not args.replay_jsonl:
@@ -984,21 +1131,21 @@ def main() -> None:
         raise ValueError("--corrected-only and replay training should not be combined.")
 
     cfg = ASRConfig(
-        model_name       = args.model,
-        language         = "ar",
-        max_audio_sec    = 30,
-        epochs           = args.epochs,
-        batch_size       = args.batch_size,
-        learning_rate    = args.learning_rate,
-        weight_decay     = args.weight_decay,
-        warmup_ratio     = args.warmup_ratio,
-        patience         = args.patience,
-        train_jsonl      = resolve_jsonl_arg(args.train_jsonl),
-        val_jsonl        = resolve_jsonl_arg(args.val_jsonl),
-        test_jsonl       = resolve_jsonl_arg(args.test_jsonl),
-        output_dir       = PROJECT_ROOT / args.output_dir,
-        grad_accum_steps = args.grad_accum,
-        label_smoothing  = args.label_smoothing,
+        model_name=args.model,
+        language="ar",
+        max_audio_sec=30,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        warmup_ratio=args.warmup_ratio,
+        patience=args.patience,
+        train_jsonl=resolve_jsonl_arg(args.train_jsonl),
+        val_jsonl=resolve_jsonl_arg(args.val_jsonl),
+        test_jsonl=resolve_jsonl_arg(args.test_jsonl),
+        output_dir=PROJECT_ROOT / args.output_dir,
+        grad_accum_steps=args.grad_accum,
+        label_smoothing=args.label_smoothing,
     )
 
     output_dir = Path(cfg.output_dir)
@@ -1010,11 +1157,16 @@ def main() -> None:
 
     logger.info("=" * 65)
     logger.info(f"Whisper fine-tune | model={cfg.model_name}")
-    logger.info(f"  corrected_only={args.corrected_only}  "
-                f"(WARNING: ablation mode — see docstring)" if args.corrected_only
-                else "  Training on FULL train split (corrected + already-correct)")
-    logger.info(f"  LR={cfg.learning_rate:.0e}  batch={cfg.batch_size}×{cfg.grad_accum_steps}"
-                f"  mix_ratio={args.mix_ratio:.2f}  max_grad_norm={args.max_grad_norm}")
+    logger.info(
+        f"  corrected_only={args.corrected_only}  "
+        f"(WARNING: ablation mode — see docstring)"
+        if args.corrected_only
+        else "  Training on FULL train split (corrected + already-correct)"
+    )
+    logger.info(
+        f"  LR={cfg.learning_rate:.0e}  batch={cfg.batch_size}×{cfg.grad_accum_steps}"
+        f"  mix_ratio={args.mix_ratio:.2f}  max_grad_norm={args.max_grad_norm}"
+    )
     logger.info(
         f"  optimizer={args.optimizer}  scheduler={args.lr_scheduler_type}  "
         f"weight_decay={cfg.weight_decay:.3g}  label_smoothing={cfg.label_smoothing:.3g}"
@@ -1045,14 +1197,18 @@ def main() -> None:
 
     # ── Baseline ──────────────────────────────────────────────────────────────
     logger.info("\n── Baseline (whisper-small zero-shot on Nabati) ──")
-    baseline_val  = evaluate_baseline(cfg.val_jsonl)
+    baseline_val = evaluate_baseline(cfg.val_jsonl)
     baseline_test = evaluate_baseline(cfg.test_jsonl)
     baseline_available = baseline_val["n"] > 0 and baseline_test["n"] > 0
     if baseline_available:
-        logger.info(f"  val  WER={baseline_val['wer']:.3f}  CER={baseline_val['cer']:.3f}  "
-                    f"Soft-CER={baseline_val['soft_cer']:.3f}  n={baseline_val['n']}")
-        logger.info(f"  test WER={baseline_test['wer']:.3f}  CER={baseline_test['cer']:.3f}  "
-                    f"Soft-CER={baseline_test['soft_cer']:.3f}  n={baseline_test['n']}")
+        logger.info(
+            f"  val  WER={baseline_val['wer']:.3f}  CER={baseline_val['cer']:.3f}  "
+            f"Soft-CER={baseline_val['soft_cer']:.3f}  n={baseline_val['n']}"
+        )
+        logger.info(
+            f"  test WER={baseline_test['wer']:.3f}  CER={baseline_test['cer']:.3f}  "
+            f"Soft-CER={baseline_test['soft_cer']:.3f}  n={baseline_test['n']}"
+        )
     else:
         logger.info(
             "  Baseline comparison unavailable for this dataset "
@@ -1062,8 +1218,8 @@ def main() -> None:
     # ── Load Processor + Model ─────────────────────────────────────────────────
     logger.info(f"Loading {cfg.model_name} …")
     processor, model = load_whisper_assets(cfg.model_name, cfg.language)
-    model.generation_config.language           = cfg.language
-    model.generation_config.task               = "transcribe"
+    model.generation_config.language = cfg.language
+    model.generation_config.task = "transcribe"
     model.generation_config.forced_decoder_ids = None
 
     if args.freeze_encoder:
@@ -1084,7 +1240,7 @@ def main() -> None:
         )
     else:
         total = sum(p.numel() for p in model.parameters())
-        logger.info(f"  Full fine-tuning: {total/1e6:.1f}M params")
+        logger.info(f"  Full fine-tuning: {total / 1e6:.1f}M params")
 
     model.to(device)
 
@@ -1097,14 +1253,14 @@ def main() -> None:
     train_ds = NabatiASRDataset(
         cfg.train_jsonl,
         processor,
-        corrected_only   = args.corrected_only,
-        speed_factors    = args.speed_perturb,
-        spec_augment     = args.spec_augment,
-        spec_time_masks  = args.spec_time_masks,
-        spec_time_max    = args.spec_time_max,
-        spec_freq_masks  = args.spec_freq_masks,
-        spec_freq_max    = args.spec_freq_max,
-        source_name      = "nabati",
+        corrected_only=args.corrected_only,
+        speed_factors=args.speed_perturb,
+        spec_augment=args.spec_augment,
+        spec_time_masks=args.spec_time_masks,
+        spec_time_max=args.spec_time_max,
+        spec_freq_masks=args.spec_freq_masks,
+        spec_freq_max=args.spec_freq_max,
+        source_name="nabati",
     )
     replay_jsonl = resolve_jsonl_arg(args.replay_jsonl) if args.replay_jsonl else None
 
@@ -1122,8 +1278,7 @@ def main() -> None:
             )
             replay_jsonl = None
         else:
-            import random as _random
-            _rng = _random.Random(42)
+            _rng = random.Random(42)
             with open(replay_jsonl, "r", encoding="utf-8") as _fh:
                 _all_lines = [ln for ln in _fh if ln.strip()]
             _rng.shuffle(_all_lines)
@@ -1131,7 +1286,9 @@ def main() -> None:
             _subset_lines = _all_lines[:_N]
             _subset_path = (
                 Path(__file__).parent.parent
-                / "data" / "processed" / f"sada_replay_{_N}.jsonl"
+                / "data"
+                / "processed"
+                / f"sada_replay_{_N}.jsonl"
             )
             _subset_path.parent.mkdir(parents=True, exist_ok=True)
             with open(_subset_path, "w", encoding="utf-8") as _out:
@@ -1147,14 +1304,14 @@ def main() -> None:
         replay_ds = NabatiASRDataset(
             replay_jsonl,
             processor,
-            corrected_only   = False,
-            speed_factors    = args.speed_perturb,
-            spec_augment     = args.spec_augment,
-            spec_time_masks  = args.spec_time_masks,
-            spec_time_max    = args.spec_time_max,
-            spec_freq_masks  = args.spec_freq_masks,
-            spec_freq_max    = args.spec_freq_max,
-            source_name      = "sada_replay",
+            corrected_only=False,
+            speed_factors=args.speed_perturb,
+            spec_augment=args.spec_augment,
+            spec_time_masks=args.spec_time_masks,
+            spec_time_max=args.spec_time_max,
+            spec_freq_masks=args.spec_freq_masks,
+            spec_freq_max=args.spec_freq_max,
+            source_name="sada_replay",
         )
         train_ds.records.extend(replay_ds.records)
         logger.info(
@@ -1162,8 +1319,8 @@ def main() -> None:
             f"into primary training stream; total train records={len(train_ds.records)}"
         )
     # Val/test are never augmented
-    val_ds   = NabatiASRDataset(cfg.val_jsonl,   processor, corrected_only=False)
-    test_ds  = NabatiASRDataset(cfg.test_jsonl,  processor, corrected_only=False)
+    val_ds = NabatiASRDataset(cfg.val_jsonl, processor, corrected_only=False)
+    test_ds = NabatiASRDataset(cfg.test_jsonl, processor, corrected_only=False)
     collator = DataCollatorSpeechSeq2Seq(processor=processor)
 
     # ── Balanced sampler ──────────────────────────────────────────────────────
@@ -1174,7 +1331,9 @@ def main() -> None:
             primary_source="nabati",
             replay_source="sada_replay",
             primary_correct_ratio=(args.mix_ratio if args.mix_ratio > 0.0 else None),
-            epoch_num_samples=len([r for r in train_ds.records if r.get("source_name") == "nabati"]),
+            epoch_num_samples=len(
+                [r for r in train_ds.records if r.get("source_name") == "nabati"]
+            ),
         )
     elif not args.corrected_only and args.mix_ratio > 0.0:
         balanced_sampler = train_ds.make_balanced_sampler(mix_ratio=args.mix_ratio)
@@ -1182,9 +1341,12 @@ def main() -> None:
     # ── Training Arguments ────────────────────────────────────────────────────
     effective_train_examples = (
         int(getattr(balanced_sampler, "num_samples", 0))
-        if balanced_sampler is not None else len(train_ds)
+        if balanced_sampler is not None
+        else len(train_ds)
     )
-    total_steps  = (effective_train_examples // (cfg.batch_size * cfg.grad_accum_steps)) * cfg.epochs
+    total_steps = (
+        effective_train_examples // (cfg.batch_size * cfg.grad_accum_steps)
+    ) * cfg.epochs
     total_steps = max(total_steps, cfg.epochs)
     warmup_steps = max(1, int(cfg.warmup_ratio * total_steps))
     logger.info(
@@ -1193,45 +1355,45 @@ def main() -> None:
     )
 
     training_args = Seq2SeqTrainingArguments(
-        output_dir                  = str(output_dir),
-        num_train_epochs            = cfg.epochs,
-        per_device_train_batch_size = cfg.batch_size,
-        per_device_eval_batch_size  = cfg.batch_size * 2,
-        gradient_accumulation_steps = cfg.grad_accum_steps,
-        learning_rate               = cfg.learning_rate,
-        weight_decay                = cfg.weight_decay,
-        warmup_steps                = warmup_steps,
-        max_grad_norm               = args.max_grad_norm,
-        optim                       = args.optimizer,
-        lr_scheduler_type           = args.lr_scheduler_type,
-        label_smoothing_factor      = args.label_smoothing,
-        predict_with_generate       = True,
-        generation_max_length       = 225,
-        eval_strategy               = "steps",
-        eval_steps                  = args.eval_steps,
-        save_strategy               = "steps",
-        save_steps                  = args.save_steps,
-        load_best_model_at_end      = True,
-        metric_for_best_model       = args.best_model_metric,
-        greater_is_better           = False,
-        save_total_limit            = 2,
-        fp16                        = (device == "cuda"),
-        dataloader_num_workers      = 0,
-        report_to                   = "tensorboard",
-        logging_dir                 = str(PROJECT_ROOT / "outputs/runs"),
-        logging_steps               = max(1, total_steps // (cfg.epochs * 5)),
-        seed                        = cfg.seed,
-        remove_unused_columns       = False,
+        output_dir=str(output_dir),
+        num_train_epochs=cfg.epochs,
+        per_device_train_batch_size=cfg.batch_size,
+        per_device_eval_batch_size=cfg.batch_size * 2,
+        gradient_accumulation_steps=cfg.grad_accum_steps,
+        learning_rate=cfg.learning_rate,
+        weight_decay=cfg.weight_decay,
+        warmup_steps=warmup_steps,
+        max_grad_norm=args.max_grad_norm,
+        optim=args.optimizer,
+        lr_scheduler_type=args.lr_scheduler_type,
+        label_smoothing_factor=args.label_smoothing,
+        predict_with_generate=True,
+        generation_max_length=225,
+        eval_strategy="steps",
+        eval_steps=args.eval_steps,
+        save_strategy="steps",
+        save_steps=args.save_steps,
+        load_best_model_at_end=True,
+        metric_for_best_model=args.best_model_metric,
+        greater_is_better=False,
+        save_total_limit=2,
+        fp16=(device == "cuda"),
+        dataloader_num_workers=0,
+        report_to="tensorboard",
+        logging_dir=str(PROJECT_ROOT / "outputs/runs"),
+        logging_steps=max(1, total_steps // (cfg.epochs * 5)),
+        seed=cfg.seed,
+        remove_unused_columns=False,
     )
 
     ocr_callback = OCRCallback(
-        processor     = processor,
-        val_jsonl     = cfg.val_jsonl,
-        device        = device,
-        ocr_threshold = args.ocr_threshold,
-        ocr_wer_threshold = args.ocr_wer_threshold,
-        ocr_cer_threshold = args.ocr_cer_threshold,
-        stop_on_threshold = args.stop_on_ocr,
+        processor=processor,
+        val_jsonl=cfg.val_jsonl,
+        device=device,
+        ocr_threshold=args.ocr_threshold,
+        ocr_wer_threshold=args.ocr_wer_threshold,
+        ocr_cer_threshold=args.ocr_cer_threshold,
+        stop_on_threshold=args.stop_on_ocr,
     )
     early_stop_callback = EarlyStoppingCallback(
         early_stopping_patience=cfg.patience,
@@ -1243,15 +1405,15 @@ def main() -> None:
     )
 
     trainer = BalancedSeq2SeqTrainer(
-        model            = model,
-        args             = training_args,
-        train_dataset    = train_ds,
-        eval_dataset     = val_ds,
-        data_collator    = collator,
-        compute_metrics  = make_compute_metrics(processor.tokenizer, cfg),
-        callbacks        = [ocr_callback, wer_gate_callback, early_stop_callback],
-        processing_class = processor.feature_extractor,
-        balanced_sampler = balanced_sampler,
+        model=model,
+        args=training_args,
+        train_dataset=train_ds,
+        eval_dataset=val_ds,
+        data_collator=collator,
+        compute_metrics=make_compute_metrics(processor.tokenizer, cfg),
+        callbacks=[ocr_callback, wer_gate_callback, early_stop_callback],
+        processing_class=processor.feature_extractor,
+        balanced_sampler=balanced_sampler,
     )
 
     # ── Train ─────────────────────────────────────────────────────────────────
@@ -1259,7 +1421,8 @@ def main() -> None:
     trainer.train()
 
     history_rows = [
-        row for row in trainer.state.log_history
+        row
+        for row in trainer.state.log_history
         if any(key in row for key in ("eval_wer", "eval_cer", "eval_soft_cer", "ocr"))
     ]
     history_path = output_dir / "training_history.json"
@@ -1292,18 +1455,20 @@ def main() -> None:
     # ── Test Evaluation ───────────────────────────────────────────────────────
     logger.info("\n── Test Evaluation (fine-tuned model, held-out test set) ──")
     test_results = trainer.evaluate(test_ds, metric_key_prefix="test")
-    ft_wer      = test_results.get("test_wer",      float("nan"))
-    ft_cer      = test_results.get("test_cer",      float("nan"))
+    ft_wer = test_results.get("test_wer", float("nan"))
+    ft_cer = test_results.get("test_cer", float("nan"))
     ft_soft_cer = test_results.get("test_soft_cer", float("nan"))
 
-    logger.info(f"  Fine-tuned: WER={ft_wer:.3f}  CER={ft_cer:.3f}  Soft-CER={ft_soft_cer:.3f}")
+    logger.info(
+        f"  Fine-tuned: WER={ft_wer:.3f}  CER={ft_cer:.3f}  Soft-CER={ft_soft_cer:.3f}"
+    )
     if baseline_available:
-        dial_gap     = baseline_test["cer"] - ft_soft_cer
+        dial_gap = baseline_test["cer"] - ft_soft_cer
         dial_gap_pct = dial_gap / max(baseline_test["cer"], 1e-9) * 100
         wer_delta = baseline_test["wer"] - ft_wer
         cer_delta = baseline_test["cer"] - ft_cer
-        wer_rel   = wer_delta / max(baseline_test["wer"], 1e-9) * 100
-        cer_rel   = cer_delta / max(baseline_test["cer"], 1e-9) * 100
+        wer_rel = wer_delta / max(baseline_test["wer"], 1e-9) * 100
+        cer_rel = cer_delta / max(baseline_test["cer"], 1e-9) * 100
     else:
         dial_gap = float("nan")
         dial_gap_pct = float("nan")
@@ -1316,38 +1481,43 @@ def main() -> None:
     lora_meta: dict = {}
     if args.use_lora:
         trainable, total_p = model.get_nb_trainable_parameters()
-        lora_meta = {"rank": args.lora_rank, "alpha": args.lora_alpha,
-                     "dropout": args.lora_dropout, "targets": args.lora_targets,
-                     "trainable_M": round(trainable / 1e6, 3),
-                     "total_M": round(total_p / 1e6, 1)}
+        lora_meta = {
+            "rank": args.lora_rank,
+            "alpha": args.lora_alpha,
+            "dropout": args.lora_dropout,
+            "targets": args.lora_targets,
+            "trainable_M": round(trainable / 1e6, 3),
+            "total_M": round(total_p / 1e6, 1),
+        }
 
     comparison = {
-        "model":           cfg.model_name,
-        "lora":            lora_meta if args.use_lora else None,
-        "corrected_only":  args.corrected_only,
-        "mix_ratio":       args.mix_ratio,
-        "optimizer":       args.optimizer,
+        "model": cfg.model_name,
+        "lora": lora_meta if args.use_lora else None,
+        "corrected_only": args.corrected_only,
+        "mix_ratio": args.mix_ratio,
+        "optimizer": args.optimizer,
         "lr_scheduler_type": args.lr_scheduler_type,
-        "weight_decay":    cfg.weight_decay,
+        "weight_decay": cfg.weight_decay,
         "label_smoothing": cfg.label_smoothing,
-        "train_jsonl":     str(cfg.train_jsonl),
-        "val_jsonl":       str(cfg.val_jsonl),
-        "test_jsonl":      str(cfg.test_jsonl),
-        "replay_jsonl":    str(replay_jsonl) if replay_jsonl else None,
-        "replay_ratio":    args.replay_ratio,
-        "speed_perturb":   list(args.speed_perturb or []),
-        "spec_augment":    args.spec_augment,
-        "freeze_encoder":  args.freeze_encoder,
+        "train_jsonl": str(cfg.train_jsonl),
+        "val_jsonl": str(cfg.val_jsonl),
+        "test_jsonl": str(cfg.test_jsonl),
+        "replay_jsonl": str(replay_jsonl) if replay_jsonl else None,
+        "replay_ratio": args.replay_ratio,
+        "speed_perturb": list(args.speed_perturb or []),
+        "spec_augment": args.spec_augment,
+        "freeze_encoder": args.freeze_encoder,
         "decoder_only_lora": args.decoder_only_lora,
         "best_model_metric": args.best_model_metric,
         "training_note": (
             "ABLATION — corrected-only causes over-correction regression. "
-            "Main training uses full train split." if args.corrected_only
+            "Main training uses full train split."
+            if args.corrected_only
             else (
                 "Mixed-domain replay training: Nabati remains primary while filtered SADA is sampled "
                 "at a fixed replay ratio to reduce catastrophic forgetting."
-                if replay_jsonl and args.replay_ratio > 0.0 else
-                "Full train split (corrected + already-correct). "
+                if replay_jsonl and args.replay_ratio > 0.0
+                else "Full train split (corrected + already-correct). "
                 "Balanced sampler prevents over-correction."
             )
         ),
@@ -1361,11 +1531,12 @@ def main() -> None:
                 "test_cer": round(baseline_test["cer"], 4),
                 "test_soft_cer": round(baseline_test["soft_cer"], 4),
             }
-            if baseline_available else None
+            if baseline_available
+            else None
         ),
         "fine_tuned": {
-            "test_wer":      round(ft_wer,      4),
-            "test_cer":      round(ft_cer,      4),
+            "test_wer": round(ft_wer, 4),
+            "test_cer": round(ft_cer, 4),
             "test_soft_cer": round(ft_soft_cer, 4),
         },
         "improvement": (
@@ -1375,7 +1546,8 @@ def main() -> None:
                 "cer_absolute": round(cer_delta, 4),
                 "cer_relative_pct": round(cer_rel, 1),
             }
-            if baseline_available else None
+            if baseline_available
+            else None
         ),
         "dialect_proximity_score": (
             {
@@ -1386,29 +1558,39 @@ def main() -> None:
                     f"(CER-strict vs Soft-CER gap)"
                 ),
             }
-            if baseline_available else None
+            if baseline_available
+            else None
         ),
     }
 
     report_path = output_dir / "whisper_comparison.json"
     report_path.write_text(json.dumps(comparison, indent=2, ensure_ascii=False))
 
-    print("\n" + "=" * 60)
-    print("  WHISPER  BASELINE vs FINE-TUNED  (test set)")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("  WHISPER  BASELINE vs FINE-TUNED  (test set)")
+    logger.info("=" * 60)
     if baseline_available:
-        print(f"  Baseline    WER={baseline_test['wer']:.3f}  CER={baseline_test['cer']:.3f}"
-              f"  Soft-CER={baseline_test['soft_cer']:.3f}")
+        logger.info(
+            f"  Baseline    WER={baseline_test['wer']:.3f}  CER={baseline_test['cer']:.3f}"
+            f"  Soft-CER={baseline_test['soft_cer']:.3f}"
+        )
     else:
-        print("  Baseline    unavailable for this dataset (no stored zero-shot transcript field)")
-    print(f"  Fine-tuned  WER={ft_wer:.3f}  CER={ft_cer:.3f}"
-          f"  Soft-CER={ft_soft_cer:.3f}"
-          + ("  [LoRA]" if args.use_lora else "  [full FT]"))
+        logger.info(
+            "  Baseline    unavailable for this dataset (no stored zero-shot transcript field)"
+        )
+    logger.info(
+        f"  Fine-tuned  WER={ft_wer:.3f}  CER={ft_cer:.3f}"
+        f"  Soft-CER={ft_soft_cer:.3f}"
+        + ("  [LoRA]" if args.use_lora else "  [full FT]")
+    )
     if baseline_available:
-        print(f"  Δ WER {wer_delta:+.3f} ({wer_rel:+.1f}%)   Δ CER {cer_delta:+.3f} ({cer_rel:+.1f}%)")
-        print(f"  Dialect Proximity Gap: {dial_gap:.4f} ({dial_gap_pct:.1f}% of CER)")
-    print("=" * 60)
-    print(f"  Report → {report_path}\n")
+        logger.info(
+            f"  Δ WER {wer_delta:+.3f} ({wer_rel:+.1f}%)   Δ CER {cer_delta:+.3f} ({cer_rel:+.1f}%)"
+        )
+        logger.info(
+            f"  Dialect Proximity Gap: {dial_gap:.4f} ({dial_gap_pct:.1f}% of CER)"
+        )
+    logger.info("=" * 60)
     logger.info(f"Report saved → {report_path}")
 
     # ── Save best adapter ─────────────────────────────────────────────────────
@@ -1430,29 +1612,33 @@ def main() -> None:
 # 10. QUALITATIVE EXAMPLES
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 def _show_examples(model, test_ds, processor, device, n=5) -> None:
     """Print REF vs HYP for n test clips (both already-correct and needs-correction)."""
-    logger.info("\n── Qualitative Examples ──")
-    print("\n── Qualitative Examples (test set) ──")
+    logger.info("\n── Qualitative Examples (test set) ──")
     model.eval()
     tokenizer = processor.tokenizer
 
     # Show mix: some already-correct, some needs-correction
-    correct_idxs   = [i for i, r in enumerate(test_ds.records) if r["is_correct"]][:2]
-    incorrect_idxs = [i for i, r in enumerate(test_ds.records) if not r["is_correct"]][:3]
+    correct_idxs = [i for i, r in enumerate(test_ds.records) if r["is_correct"]][:2]
+    incorrect_idxs = [i for i, r in enumerate(test_ds.records) if not r["is_correct"]][
+        :3
+    ]
 
-    for tag, idx in [("already-correct", i) for i in correct_idxs] + \
-                    [("needs-correction", i) for i in incorrect_idxs]:
+    for tag, idx in [("already-correct", i) for i in correct_idxs] + [
+        ("needs-correction", i) for i in incorrect_idxs
+    ]:
         sample = test_ds[idx]
-        ref    = test_ds.records[idx]["text_corrected"]
-        feats  = torch.tensor(sample["input_features"]).unsqueeze(0).to(device)
+        ref = test_ds.records[idx]["text_corrected"]
+        feats = torch.tensor(sample["input_features"]).unsqueeze(0).to(device)
         with torch.no_grad():
-            pred_ids = model.generate(input_features=feats, language="ar", task="transcribe")
+            pred_ids = model.generate(
+                input_features=feats, language="ar", task="transcribe"
+            )
         hyp = tokenizer.decode(pred_ids[0], skip_special_tokens=True).strip()
-        print(f"\n  [{tag}]")
-        print(f"   REF : {ref}")
-        print(f"   HYP : {hyp}")
-        logger.info(f"  [{tag}] REF: {ref}  |  HYP: {hyp}")
+        logger.info(f"\n  [{tag}]")
+        logger.info(f"   REF : {ref}")
+        logger.info(f"   HYP : {hyp}")
 
 
 if __name__ == "__main__":

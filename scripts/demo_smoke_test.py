@@ -22,7 +22,11 @@ REPORT_PATH = PROJECT_ROOT / "outputs/reports/demo_smoke_test.json"
 
 def main() -> None:
     logger.add(PROJECT_ROOT / "logs/demo_smoke_test.log", rotation="10 MB")
-    rows = [json.loads(line) for line in TEST_PATH.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [
+        json.loads(line)
+        for line in TEST_PATH.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     clips = []
     seen = set()
     for row in rows:
@@ -42,7 +46,9 @@ def main() -> None:
     external_source_clip = clips[1] if len(clips) > 1 else clips[0]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        external_sim_path = Path(tmpdir) / f"external_sim_{Path(external_source_clip).stem}.mp3"
+        external_sim_path = (
+            Path(tmpdir) / f"external_sim_{Path(external_source_clip).stem}.mp3"
+        )
         shutil.copy2(external_source_clip, external_sim_path)
 
         scenarios = [
@@ -80,7 +86,9 @@ def main() -> None:
                         "latency_ms": result.inference_ms,
                         "poem_id": result.poem_id,
                         "final_poem_emotion": result.emotion_poem_final,
-                        "transcript_source": "corrected_corpus" if result.asr_model == "corpus_corrected_text" else "whisper_asr",
+                        "transcript_source": "corrected_corpus"
+                        if result.asr_model == "corpus_corrected_text"
+                        else "whisper_asr",
                         "external_simulation": scenario["external_simulation"],
                         "source_clip": scenario.get("source_clip"),
                     }
@@ -124,8 +132,12 @@ def main() -> None:
                         "clip": clip,
                         "clip_id": Path(clip).stem,
                         "success": bool(search_payload["ok"]),
-                        "poem_id": search_payload["rows"][0]["poem_id"] if search_payload["rows"] else None,
-                        "top_candidate_score": search_payload["rows"][0]["score"] if search_payload["rows"] else None,
+                        "poem_id": search_payload["rows"][0]["poem_id"]
+                        if search_payload["rows"]
+                        else None,
+                        "top_candidate_score": search_payload["rows"][0]["score"]
+                        if search_payload["rows"]
+                        else None,
                         "query_source": search_payload["transcript_source"],
                         "query_text_preview": search_payload["query_text"][:120],
                         "error": search_payload["error"] or None,
@@ -151,13 +163,18 @@ def main() -> None:
     all_results = analyze_results + search_results
     payload = {
         "n_examples": len(all_results),
-        "success_rate": round(sum(int(item["success"]) for item in all_results) / max(len(all_results), 1), 4),
+        "success_rate": round(
+            sum(int(item["success"]) for item in all_results)
+            / max(len(all_results), 1),
+            4,
+        ),
         "analyze_results": analyze_results,
         "search_results": search_results,
-        "results": all_results,
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    REPORT_PATH.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     logger.success("Saved demo smoke report → {}", REPORT_PATH)
 
 

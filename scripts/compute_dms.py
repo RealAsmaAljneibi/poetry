@@ -41,38 +41,25 @@ from src.data.arousal_labels import emotion_to_arousal
 PROJECT_ROOT = Path(__file__).parent.parent
 
 
-# ── Text emotion → implied arousal ───────────────────────────────────────────
-# emotion_text is the semantic/lyric emotion (what the words say).
-# We convert it to its implied arousal level using the same mapping as
-# emotion_audio, but applied to the TEXT side.
-# This gives us a cross-modal comparison:
-#   text says "Sorrow" → implied arousal = Low
-#   audio has "Defiance" delivery → audio arousal = High  → MISMATCH
-
-def text_emotion_to_arousal(emotion_text: str | None) -> str | None:
-    """Map emotion_text label to its implied arousal level."""
-    return emotion_to_arousal(emotion_text)
-
-
 def compute_dms(master_jsonl: Path) -> dict:
     """Compute DMS statistics over the full dataset."""
     rows = [json.loads(line) for line in open(master_jsonl)]
 
-    total       = 0
-    mismatches  = 0
-    skipped     = 0
+    total = 0
+    mismatches = 0
+    skipped = 0
 
-    genre_total:      defaultdict[str, int] = defaultdict(int)
-    genre_mismatch:   defaultdict[str, int] = defaultdict(int)
+    genre_total: defaultdict[str, int] = defaultdict(int)
+    genre_mismatch: defaultdict[str, int] = defaultdict(int)
     examples_mismatch: list[dict] = []
-    examples_match:    list[dict] = []
+    examples_match: list[dict] = []
 
     for row in rows:
-        emotion_text  = row.get("emotion_text")
+        emotion_text = row.get("emotion_text")
         emotion_audio = row.get("emotion_audio")
-        genre         = row.get("genre_en", "Unknown")
+        genre = row.get("genre_en", "Unknown")
 
-        text_ar  = text_emotion_to_arousal(emotion_text)
+        text_ar = emotion_to_arousal(emotion_text)
         audio_ar = emotion_to_arousal(emotion_audio)
 
         if text_ar is None or audio_ar is None:
@@ -87,26 +74,30 @@ def compute_dms(master_jsonl: Path) -> dict:
             mismatches += 1
             genre_mismatch[genre] += 1
             if len(examples_mismatch) < 5:
-                examples_mismatch.append({
-                    "source_poem":   row.get("source_poem"),
-                    "poet_en":       row.get("poet_en"),
-                    "genre":         genre,
-                    "text_corrected": row.get("text_corrected", "")[:80],
-                    "emotion_text":  emotion_text,
-                    "text_arousal":  text_ar,
+                examples_mismatch.append(
+                    {
+                        "source_poem": row.get("source_poem"),
+                        "poet_en": row.get("poet_en"),
+                        "genre": genre,
+                        "text_corrected": row.get("text_corrected", "")[:80],
+                        "emotion_text": emotion_text,
+                        "text_arousal": text_ar,
+                        "emotion_audio": emotion_audio,
+                        "audio_arousal": audio_ar,
+                        "interpretation": f"Text says '{emotion_text}' ({text_ar}) but delivery is {audio_ar}",
+                    }
+                )
+        elif len(examples_match) < 3:
+            examples_match.append(
+                {
+                    "source_poem": row.get("source_poem"),
+                    "genre": genre,
+                    "emotion_text": emotion_text,
+                    "text_arousal": text_ar,
                     "emotion_audio": emotion_audio,
                     "audio_arousal": audio_ar,
-                    "interpretation": f"Text says '{emotion_text}' ({text_ar}) but delivery is {audio_ar}",
-                })
-        elif len(examples_match) < 3:
-            examples_match.append({
-                "source_poem": row.get("source_poem"),
-                "genre": genre,
-                "emotion_text": emotion_text,
-                "text_arousal": text_ar,
-                "emotion_audio": emotion_audio,
-                "audio_arousal": audio_ar,
-            })
+                }
+            )
 
     overall_dms = mismatches / max(total, 1)
     logger.info(f"Overall DMS: {mismatches}/{total} = {overall_dms:.1%}")
@@ -115,19 +106,21 @@ def compute_dms(master_jsonl: Path) -> dict:
     for genre in sorted(genre_total):
         rate = genre_mismatch[genre] / max(genre_total[genre], 1)
         per_genre[genre] = {
-            "total":          genre_total[genre],
-            "mismatches":     genre_mismatch[genre],
-            "mismatch_rate":  round(rate, 4),
+            "total": genre_total[genre],
+            "mismatches": genre_mismatch[genre],
+            "mismatch_rate": round(rate, 4),
         }
-        logger.info(f"  {genre:50s} {rate:.1%}  ({genre_mismatch[genre]}/{genre_total[genre]})")
+        logger.info(
+            f"  {genre:50s} {rate:.1%}  ({genre_mismatch[genre]}/{genre_total[genre]})"
+        )
 
     return {
         "overall": {
-            "total_clips":     total,
-            "skipped":         skipped,
-            "mismatches":      mismatches,
-            "mismatch_rate":   round(overall_dms, 4),
-            "interpretation":  (
+            "total_clips": total,
+            "skipped": skipped,
+            "mismatches": mismatches,
+            "mismatch_rate": round(overall_dms, 4),
+            "interpretation": (
                 "When text_arousal ≠ audio_arousal the poet delivers the verse "
                 "with an energy level that contradicts the semantic content — "
                 "a culturally significant performance device in Nabati poetry."
@@ -135,31 +128,44 @@ def compute_dms(master_jsonl: Path) -> dict:
         },
         "per_genre": per_genre,
         "examples_mismatch": examples_mismatch,
-        "examples_match":    examples_match,
+        "examples_match": examples_match,
     }
 
 
 def plot_dms_per_genre(per_genre: dict, out_path: Path) -> None:
     genres = list(per_genre.keys())
-    rates  = [per_genre[g]["mismatch_rate"] for g in genres]
+    rates = [per_genre[g]["mismatch_rate"] for g in genres]
 
     # Short genre names for readability
     short = [g.split("(")[0].strip() for g in genres]
-    x     = np.arange(len(genres))
+    x = np.arange(len(genres))
 
     fig, ax = plt.subplots(figsize=(12, 5))
     bars = ax.bar(x, [r * 100 for r in rates], color="steelblue", edgecolor="white")
-    ax.axhline(y=np.mean(rates) * 100, color="red", linestyle="--", linewidth=1.5,
-               label=f"Mean: {np.mean(rates):.1%}")
+    ax.axhline(
+        y=np.mean(rates) * 100,
+        color="red",
+        linestyle="--",
+        linewidth=1.5,
+        label=f"Mean: {np.mean(rates):.1%}",
+    )
     ax.set_xticks(x)
     ax.set_xticklabels(short, rotation=30, ha="right", fontsize=9)
     ax.set_ylabel("Mismatch Rate (%)")
-    ax.set_title("Delivery Mismatch Rate per Genre\n(text-implied arousal ≠ audio arousal)")
+    ax.set_title(
+        "Delivery Mismatch Rate per Genre\n(text-implied arousal ≠ audio arousal)"
+    )
     ax.legend()
 
     for bar, rate in zip(bars, rates):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.5,
-                f"{rate:.0%}", ha="center", va="bottom", fontsize=8)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.5,
+            f"{rate:.0%}",
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +180,9 @@ def main() -> None:
 
     master_jsonl = PROJECT_ROOT / "data/processed/master_dataset.jsonl"
     if not master_jsonl.exists():
-        logger.error(f"master_dataset.jsonl not found at {master_jsonl}. Run just generate-data first.")
+        logger.error(
+            f"master_dataset.jsonl not found at {master_jsonl}. Run just generate-data first."
+        )
         sys.exit(1)
 
     logger.info("Computing Delivery Mismatch Score ...")
@@ -192,8 +200,10 @@ def main() -> None:
 
     overall = results["overall"]
     logger.info("=" * 50)
-    logger.info(f"Overall DMS: {overall['mismatch_rate']:.1%}  "
-                f"({overall['mismatches']}/{overall['total_clips']} clips)")
+    logger.info(
+        f"Overall DMS: {overall['mismatch_rate']:.1%}  "
+        f"({overall['mismatches']}/{overall['total_clips']} clips)"
+    )
     logger.info("=" * 50)
 
 

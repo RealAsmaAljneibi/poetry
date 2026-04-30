@@ -30,9 +30,9 @@ tsne:
 # Train all main models (ASR → genre → emotion → arousal)
 train:
     just asr
-    uv run python scripts/train_text_classifier.py --model arapoem --task genre --context-window 3
-    uv run python scripts/train_text_classifier.py --model arapoem --task emotion_text --context-window 1 --emotion-merge-profile rare_merge_v1 --run-id K1_merge_v1
-    uv run python scripts/train_arousal.py
+    just train-genre
+    just train-emotion
+    just train-arousal
 
 train-genre:
     uv run python scripts/train_text_classifier.py --model arapoem --task genre --context-window 3
@@ -131,25 +131,6 @@ cnn-summary:
 cnn-smoke:
     uv run python scripts/train_cnn_ablation.py --run all --epochs 3
 
-# aliases used in RTM runbook
-cnn-ablation-list:
-    just cnn-list
-
-cnn-ablation-run RUN="CNN-R1":
-    just cnn-run {{RUN}}
-
-cnn-ablation-all:
-    just cnn-all
-
-cnn-ablation-summary:
-    just cnn-summary
-
-cnn-ablation-smoke:
-    just cnn-smoke
-
-cnn-ablation-baseline:
-    just cnn-run CNN-R1
-
 # ── Fusion ablation ────────────────────────────────────────────────────────────
 
 fusion-ablation:
@@ -176,7 +157,7 @@ eval-simclr:
 genre-cv:
     uv run python scripts/stratified_genre_cv.py
 
-techniques-table:
+ablation-table:
     uv run python scripts/comprehensive_ablation_table.py
 
 # ── Evaluation ─────────────────────────────────────────────────────────────────
@@ -194,9 +175,12 @@ evaluate:
 eval-baselines:
     uv run python scripts/run_baseline.py
 
-# alias used in RTM runbook
-evaluate-baselines:
+# convenience aliases for baseline vs. method evaluation
+run-baseline:
     just eval-baselines
+
+run-method:
+    just evaluate
 
 eval-retrieval:
     uv run python scripts/build_retrieval_index.py

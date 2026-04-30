@@ -10,7 +10,12 @@ from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.evaluation.metrics import SOFT_CER_COST_TABLE, _preprocess_soft, soft_cer, standard_cer
+from src.evaluation.metrics import (
+    SOFT_CER_COST_TABLE,
+    _preprocess_soft,
+    soft_cer,
+    standard_cer,
+)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 REPORT_JSON = PROJECT_ROOT / "outputs/reports/soft_cer_sensitivity.json"
@@ -57,16 +62,17 @@ def align_substitutions(hypothesis: str, reference: str) -> list[tuple[str, str]
     i, j = m, n
     tracked = set(SOFT_CER_COST_TABLE)
     while i > 0 or j > 0:
-        if i > 0 and j > 0 and hyp[i - 1] == ref[j - 1] and dp[i][j] == dp[i - 1][j - 1]:
+        if (
+            i > 0
+            and j > 0
+            and hyp[i - 1] == ref[j - 1]
+            and dp[i][j] == dp[i - 1][j - 1]
+        ):
             i -= 1
             j -= 1
             continue
 
-        if (
-            i > 0
-            and j > 0
-            and dp[i][j] == dp[i - 1][j - 1] + 1
-        ):
+        if i > 0 and j > 0 and dp[i][j] == dp[i - 1][j - 1] + 1:
             pair = (hyp[i - 1], ref[j - 1])
             if pair in tracked:
                 substitutions.append(pair)
@@ -92,9 +98,7 @@ def corpus_frequency_cost_table(records: list[dict]) -> dict[tuple[str, str], fl
     counts: Counter[tuple[str, str]] = Counter()
     total = 0
 
-    canonical_lookup = {
-        tuple(sorted((a, b))): (a, b) for a, b in SOFT_CER_COST_TABLE
-    }
+    canonical_lookup = {tuple(sorted((a, b))): (a, b) for a, b in SOFT_CER_COST_TABLE}
 
     for row in records:
         for pair in align_substitutions(row["hyp"], row["ref"]):
@@ -104,7 +108,9 @@ def corpus_frequency_cost_table(records: list[dict]) -> dict[tuple[str, str], fl
                 total += 1
 
     if total == 0:
-        logger.warning("No tracked dialect substitutions found; falling back to hand-assigned costs.")
+        logger.warning(
+            "No tracked dialect substitutions found; falling back to hand-assigned costs."
+        )
         return dict(SOFT_CER_COST_TABLE)
 
     max_freq = max(counts.values()) if counts else 1
@@ -135,9 +141,13 @@ def load_records(split: str = "test") -> list[dict]:
     return rows
 
 
-def evaluate(records: list[dict], name: str, cost_table: dict[tuple[str, str], float]) -> dict:
+def evaluate(
+    records: list[dict], name: str, cost_table: dict[tuple[str, str], float]
+) -> dict:
     cer_scores = [standard_cer(row["hyp"], row["ref"]) for row in records]
-    soft_scores = [soft_cer(row["hyp"], row["ref"], cost_table=cost_table) for row in records]
+    soft_scores = [
+        soft_cer(row["hyp"], row["ref"], cost_table=cost_table) for row in records
+    ]
     mean_cer = float(np.mean(cer_scores))
     mean_soft = float(np.mean(soft_scores))
     dps = (mean_cer - mean_soft) / max(mean_cer, 1e-9) * 100
@@ -165,7 +175,9 @@ def compare_tables(empirical_table: dict[tuple[str, str], float]) -> list[dict]:
                 "empirical_cost": empirical_table[(undirected[0], undirected[1])],
             }
         )
-    rows.sort(key=lambda row: abs(row["hand_cost"] - row["empirical_cost"]), reverse=True)
+    rows.sort(
+        key=lambda row: abs(row["hand_cost"] - row["empirical_cost"]), reverse=True
+    )
     return rows
 
 
@@ -234,7 +246,9 @@ def main() -> None:
     }
 
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_JSON.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    REPORT_JSON.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     REPORT_MD.write_text(render_markdown(summary), encoding="utf-8")
 
     logger.success(f"Soft-CER sensitivity report → {REPORT_MD}")

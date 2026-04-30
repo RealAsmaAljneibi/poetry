@@ -61,7 +61,9 @@ from scripts.demo import ArousalMLP, _extract_arousal_features
 PROJECT_ROOT = Path(__file__).parent.parent
 MODEL_NAME = "faisalq/bert-base-arapoembert"
 GENRE_MODEL_NAME = "faisalq/bert-base-arapoembert"
-EMOTION_CKPT = PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+EMOTION_CKPT = (
+    PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+)
 AROUSAL_CKPT = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_mlp_arousal_best.pt"
 AROUSAL_SCALER = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_scaler.pkl"
 CNN_CKPT = PROJECT_ROOT / "outputs/models/audio_cnn/audio_cnn_emotion_best.pt"
@@ -76,13 +78,25 @@ DEFAULT_CONTEXT_WINDOW = 1
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Evaluate poem-level emotion aggregation and fusion.")
-    p.add_argument("--merge-profile", default=DEFAULT_MERGE_PROFILE, choices=["none", "rare_merge_v1"])
+    p = argparse.ArgumentParser(
+        description="Evaluate poem-level emotion aggregation and fusion."
+    )
+    p.add_argument(
+        "--merge-profile",
+        default=DEFAULT_MERGE_PROFILE,
+        choices=["none", "rare_merge_v1"],
+    )
     p.add_argument("--context-window", type=int, default=DEFAULT_CONTEXT_WINDOW)
     p.add_argument("--checkpoint", type=Path, default=EMOTION_CKPT)
     p.add_argument("--run-id", default=DEFAULT_RUN_ID)
-    p.add_argument("--genre-conditioning", choices=["none", "constrained", "prior", "all"], default="all")
-    p.add_argument("--lambda-sweep", nargs="+", type=float, default=[0.5, 1.0, 1.5, 2.0])
+    p.add_argument(
+        "--genre-conditioning",
+        choices=["none", "constrained", "prior", "all"],
+        default="all",
+    )
+    p.add_argument(
+        "--lambda-sweep", nargs="+", type=float, default=[0.5, 1.0, 1.5, 2.0]
+    )
     p.add_argument(
         "--poem-aggregation",
         choices=["mean", "conf_weighted", "logit_mean", "vote", "all"],
@@ -94,7 +108,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def build_windowed_rows(
@@ -127,7 +145,9 @@ def build_windowed_rows(
             else:
                 model_text = text_i
 
-            gold_emotion_core = map_text_emotion_to_core(rec.get("emotion_text"), merge_profile)
+            gold_emotion_core = map_text_emotion_to_core(
+                rec.get("emotion_text"), merge_profile
+            )
             if gold_emotion_core is None:
                 continue
             built.append(
@@ -203,13 +223,17 @@ def load_arousal_assets(device: torch.device):
     return scaler, model
 
 
-def predict_arousal_probs(audio_path: Path, scaler, model, device: torch.device) -> list[float] | None:
+def predict_arousal_probs(
+    audio_path: Path, scaler, model, device: torch.device
+) -> list[float] | None:
     if scaler is None or model is None:
         return None
     feats = _extract_arousal_features(audio_path)
     if feats is None:
         return None
-    x = torch.tensor(scaler.transform(feats.reshape(1, -1)), dtype=torch.float32).to(device)
+    x = torch.tensor(scaler.transform(feats.reshape(1, -1)), dtype=torch.float32).to(
+        device
+    )
     with torch.no_grad():
         logits = model(x)
     return F.softmax(logits, dim=-1)[0].cpu().tolist()
@@ -217,7 +241,9 @@ def predict_arousal_probs(audio_path: Path, scaler, model, device: torch.device)
 
 def load_audio_emotion_model(device: torch.device):
     if not CNN_CKPT.exists():
-        logger.warning("Audio CNN checkpoint missing; full fusion will skip audio-emotion.")
+        logger.warning(
+            "Audio CNN checkpoint missing; full fusion will skip audio-emotion."
+        )
         return None
     model = Emotion1DCNN().to(device)
     state = torch.load(CNN_CKPT, map_location=device, weights_only=True)
@@ -226,7 +252,9 @@ def load_audio_emotion_model(device: torch.device):
     return model
 
 
-def predict_audio_emotion_probs(audio_path: Path, model, device: torch.device) -> list[float] | None:
+def predict_audio_emotion_probs(
+    audio_path: Path, model, device: torch.device
+) -> list[float] | None:
     if model is None:
         return None
     wav, _ = librosa.load(str(audio_path), sr=16000, mono=True)
@@ -251,18 +279,46 @@ def majority_label(labels: list[str]) -> str:
     return counts.most_common(1)[0][0]
 
 
-def _poem_top2_accuracy(prob_rows: list[list[float]], true_ids: list[int]) -> float:
-    """Top-2 accuracy using top_k_accuracy from metrics."""
-    if not prob_rows:
-        return 0.0
-    return sum(top_k_accuracy(prob, true, k=2) for prob, true in zip(prob_rows, true_ids)) / len(true_ids)
+def _build_poem_metrics(
+    true_ids: list[int],
+    pred_ids: list[int],
+    probs: list[list[float]],
+    ndcg_scores: list[float],
+    partial_scores: list[float],
+    plausibility_hits: int,
+    dms_hits: int,
+    n_labels: int,
+) -> dict[str, Any]:
+    n = max(len(true_ids), 1)
+    all_label_ids = list(range(n_labels))
+    return {
+        "hard_macro_f1": round(
+            float(f1_score(true_ids, pred_ids, average="macro", zero_division=0)), 4
+        ),
+        "accuracy": round(
+            sum(int(p == t) for p, t in zip(pred_ids, true_ids)) / n, 4
+        ),
+        "balanced_accuracy": round(balanced_accuracy(true_ids, pred_ids), 4),
+        "ndcg_at_3": round(float(np.mean(ndcg_scores)) if ndcg_scores else 0.0, 4),
+        "top3_accuracy": round(_poem_topk_accuracy(probs, true_ids, k=3), 4),
+        "top2_accuracy": round(_poem_topk_accuracy(probs, true_ids, k=2), 4),
+        "log_loss": round(log_loss_safe(true_ids, probs, labels=all_label_ids), 4),
+        "ece": round(expected_calibration_error(probs, true_ids), 4),
+        "mean_partial_credit": round(float(np.mean(partial_scores)), 4),
+        "genre_plausibility_rate": round(plausibility_hits / n, 4),
+        "dms_rate": round(dms_hits / n, 4),
+        "n_poems": len(true_ids),
+    }
 
 
-def _poem_top3_accuracy(prob_rows: list[list[float]], true_ids: list[int]) -> float:
-    """Top-3 accuracy using top_k_accuracy from metrics."""
+def _poem_topk_accuracy(
+    prob_rows: list[list[float]], true_ids: list[int], k: int
+) -> float:
     if not prob_rows:
         return 0.0
-    return sum(top_k_accuracy(prob, true, k=3) for prob, true in zip(prob_rows, true_ids)) / len(true_ids)
+    return sum(
+        top_k_accuracy(prob, true, k=k) for prob, true in zip(prob_rows, true_ids)
+    ) / len(true_ids)
 
 
 def evaluate_aggregation_methods(
@@ -281,8 +337,14 @@ def evaluate_aggregation_methods(
         poem_prob_rows: list[list[float]] = []
         poem_summaries: dict[str, Any] = {}
         for poem_id, poem_rows in grouped.items():
-            probs_by_clip = [np.array(row["text_emotion_probs"], dtype=np.float64) for row in poem_rows]
-            logits_by_clip = [np.array(row["text_emotion_logits"], dtype=np.float64) for row in poem_rows]
+            probs_by_clip = [
+                np.array(row["text_emotion_probs"], dtype=np.float64)
+                for row in poem_rows
+            ]
+            logits_by_clip = [
+                np.array(row["text_emotion_logits"], dtype=np.float64)
+                for row in poem_rows
+            ]
             conf_by_clip = [float(row["text_emotion_conf"]) for row in poem_rows]
             if method == "mean":
                 poem_probs = aggregate_probs_mean(probs_by_clip)
@@ -301,23 +363,37 @@ def evaluate_aggregation_methods(
                 method=method,
                 clip_conf=conf_by_clip,
             )
-            gold_label = majority_label([str(row["gold_emotion_core"]) for row in poem_rows])
+            gold_label = majority_label(
+                [str(row["gold_emotion_core"]) for row in poem_rows]
+            )
             summary["gold_poem_emotion"] = gold_label
             poem_true_ids.append(labels.index(gold_label))
             poem_pred_ids.append(labels.index(summary["poem_emotion_raw_top1"]))
-            poem_prob_rows.append([item["prob"] for item in sorted(summary["poem_emotion_raw_topk"], key=lambda x: labels.index(x["label"]))] if False else poem_probs.tolist())
+            poem_prob_rows.append(poem_probs.tolist())
             poem_summaries[poem_id] = summary
 
-        poem_f1 = float(f1_score(poem_true_ids, poem_pred_ids, average="macro", zero_division=0))
-        poem_acc = sum(int(p == t) for p, t in zip(poem_pred_ids, poem_true_ids)) / max(len(poem_true_ids), 1)
+        poem_f1 = float(
+            f1_score(poem_true_ids, poem_pred_ids, average="macro", zero_division=0)
+        )
+        poem_acc = sum(int(p == t) for p, t in zip(poem_pred_ids, poem_true_ids)) / max(
+            len(poem_true_ids), 1
+        )
         all_label_ids = list(range(len(labels)))
         report["poem_level"][method] = {
             "hard_macro_f1": round(poem_f1, 4),
             "accuracy": round(poem_acc, 4),
-            "balanced_accuracy": round(balanced_accuracy(poem_true_ids, poem_pred_ids), 4),
-            "top2_accuracy": round(_poem_top2_accuracy(poem_prob_rows, poem_true_ids), 4),
-            "top3_accuracy": round(_poem_top3_accuracy(poem_prob_rows, poem_true_ids), 4),
-            "log_loss": round(log_loss_safe(poem_true_ids, poem_prob_rows, labels=all_label_ids), 4),
+            "balanced_accuracy": round(
+                balanced_accuracy(poem_true_ids, poem_pred_ids), 4
+            ),
+            "top2_accuracy": round(
+                _poem_topk_accuracy(poem_prob_rows, poem_true_ids, k=2), 4
+            ),
+            "top3_accuracy": round(
+                _poem_topk_accuracy(poem_prob_rows, poem_true_ids, k=3), 4
+            ),
+            "log_loss": round(
+                log_loss_safe(poem_true_ids, poem_prob_rows, labels=all_label_ids), 4
+            ),
             "ece": round(expected_calibration_error(poem_prob_rows, poem_true_ids), 4),
             "n_poems": len(poem_true_ids),
         }
@@ -326,7 +402,6 @@ def evaluate_aggregation_methods(
 
 
 def select_best_aggregation_method(report: dict[str, Any]) -> str:
-    """Pick the best poem aggregation method from validation metrics."""
     method_metrics = report["poem_level"]
     preference = {"logit_mean": 3, "conf_weighted": 2, "mean": 1, "vote": 0}
     return max(
@@ -339,7 +414,6 @@ def select_best_aggregation_method(report: dict[str, Any]) -> str:
 
 
 def select_best_fusion_variant(report: dict[str, Any]) -> str:
-    """Pick the adopted fusion variant from validation metrics only."""
     systems = report["systems"]
     preference = {"full_fusion": 3, "genre_prior": 2, "genre_constrained": 1, "raw": 0}
     return max(
@@ -383,7 +457,9 @@ def build_poem_audio_summaries(
             audio_path = Path(str(row.get("audio_filename") or ""))
             if not audio_path.exists():
                 continue
-            arousal_probs = predict_arousal_probs(audio_path, scaler, arousal_model, device)
+            arousal_probs = predict_arousal_probs(
+                audio_path, scaler, arousal_model, device
+            )
             if arousal_probs is not None:
                 arousal_probs_by_clip.append(np.array(arousal_probs, dtype=np.float64))
             audio_probs = predict_audio_emotion_probs(audio_path, audio_model, device)
@@ -420,10 +496,14 @@ def build_poem_audio_summaries(
         summaries[poem_id] = {
             "poem_arousal": arousal_label,
             "poem_arousal_confidence": round(arousal_conf, 6),
-            "poem_arousal_probs": None if arousal_poem_probs is None else arousal_poem_probs.tolist(),
+            "poem_arousal_probs": None
+            if arousal_poem_probs is None
+            else arousal_poem_probs.tolist(),
             "audio_emotion_poem_aux": audio_label,
             "audio_emotion_poem_aux_confidence": round(audio_conf, 6),
-            "audio_emotion_poem_probs": None if audio_poem_probs is None else audio_poem_probs.tolist(),
+            "audio_emotion_poem_probs": None
+            if audio_poem_probs is None
+            else audio_poem_probs.tolist(),
             "audio_clip_support": dict(Counter(mapped_audio_votes)),
         }
     return summaries
@@ -444,14 +524,26 @@ def evaluate_fusion_variants(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     labels = get_merged_emotion_classes(merge_profile)
     if audio_summaries is None:
-        audio_summaries = build_poem_audio_summaries(grouped_rows, device, merge_profile) if include_full_fusion else {}
+        audio_summaries = (
+            build_poem_audio_summaries(grouped_rows, device, merge_profile)
+            if include_full_fusion
+            else {}
+        )
     systems: dict[str, dict[str, Any]] = {}
     detailed_predictions: dict[str, Any] = {}
 
     variant_defs: list[tuple[str, Any]] = [
         ("raw", lambda probs, genre: probs),
-        ("genre_constrained", lambda probs, genre: apply_genre_constrained(probs, labels, genre, merge_profile)),
-        ("genre_prior", lambda probs, genre: apply_genre_prior(probs, labels, genre, priors, lam)),
+        (
+            "genre_constrained",
+            lambda probs, genre: apply_genre_constrained(
+                probs, labels, genre, merge_profile
+            ),
+        ),
+        (
+            "genre_prior",
+            lambda probs, genre: apply_genre_prior(probs, labels, genre, priors, lam),
+        ),
     ]
 
     for variant_name, transform in variant_defs:
@@ -473,12 +565,16 @@ def evaluate_fusion_variants(
             genre = str(poem_rows[0].get("manual_genre") or "")
             conditioned = transform(full_raw_probs, genre)
             audio_summary = audio_summaries.get(poem_id, {})
-            gold_label = majority_label([str(row["gold_emotion_core"]) for row in poem_rows])
+            gold_label = majority_label(
+                [str(row["gold_emotion_core"]) for row in poem_rows]
+            )
             poem_true_ids.append(labels.index(gold_label))
             pred_label = labels[int(np.argmax(conditioned))]
             poem_pred_ids.append(labels.index(pred_label))
             poem_probs.append(conditioned.tolist())
-            plausibility_hits += int(pred_label in set(get_genre_expected_emotions(genre, merge_profile)))
+            plausibility_hits += int(
+                pred_label in set(get_genre_expected_emotions(genre, merge_profile))
+            )
             partial_scores.append(
                 emotion_partial_credit(
                     pred_label,
@@ -496,14 +592,19 @@ def evaluate_fusion_variants(
                     labels,
                 )
             )
-            delivery = compute_delivery_metadata(pred_label, audio_summary.get("poem_arousal"))
+            delivery = compute_delivery_metadata(
+                pred_label, audio_summary.get("poem_arousal")
+            )
             dms_hits += int(delivery["dms_poem"])
             per_poem_variant[poem_id] = {
                 **text_summary,
                 "manual_genre": genre,
                 "gold_poem_emotion": gold_label,
                 "conditioned_top3": [
-                    {"label": labels[int(idx)], "prob": round(float(conditioned[int(idx)]), 6)}
+                    {
+                        "label": labels[int(idx)],
+                        "prob": round(float(conditioned[int(idx)]), 6),
+                    }
                     for idx in np.argsort(conditioned)[::-1][:3]
                 ],
                 **audio_summary,
@@ -511,22 +612,17 @@ def evaluate_fusion_variants(
                 "predicted_poem_emotion": pred_label,
             }
 
-        all_label_ids = list(range(len(labels)))
         systems[variant_name] = {
-            "poem_metrics": {
-                "hard_macro_f1": round(float(f1_score(poem_true_ids, poem_pred_ids, average="macro", zero_division=0)), 4),
-                "accuracy": round(sum(int(p == t) for p, t in zip(poem_pred_ids, poem_true_ids)) / max(len(poem_true_ids), 1), 4),
-                "balanced_accuracy": round(balanced_accuracy(poem_true_ids, poem_pred_ids), 4),
-                "ndcg_at_3": round(float(np.mean(ndcg_scores)) if ndcg_scores else 0.0, 4),
-                "top3_accuracy": round(_poem_top3_accuracy(poem_probs, poem_true_ids), 4),
-                "top2_accuracy": round(_poem_top2_accuracy(poem_probs, poem_true_ids), 4),
-                "log_loss": round(log_loss_safe(poem_true_ids, poem_probs, labels=all_label_ids), 4),
-                "ece": round(expected_calibration_error(poem_probs, poem_true_ids), 4),
-                "mean_partial_credit": round(float(np.mean(partial_scores)), 4),
-                "genre_plausibility_rate": round(plausibility_hits / max(len(poem_true_ids), 1), 4),
-                "dms_rate": round(dms_hits / max(len(poem_true_ids), 1), 4),
-                "n_poems": len(poem_true_ids),
-            },
+            "poem_metrics": _build_poem_metrics(
+                true_ids=poem_true_ids,
+                pred_ids=poem_pred_ids,
+                probs=poem_probs,
+                ndcg_scores=ndcg_scores,
+                partial_scores=partial_scores,
+                plausibility_hits=plausibility_hits,
+                dms_hits=dms_hits,
+                n_labels=len(labels),
+            ),
         }
         detailed_predictions[variant_name] = per_poem_variant
 
@@ -572,13 +668,17 @@ def evaluate_fusion_variants(
             genre=genre,
             poem_arousal=audio_summary.get("poem_arousal"),
             audio_aux_label=audio_summary.get("audio_emotion_poem_aux"),
-            audio_aux_conf=float(audio_summary.get("audio_emotion_poem_aux_confidence") or 0.0),
+            audio_aux_conf=float(
+                audio_summary.get("audio_emotion_poem_aux_confidence") or 0.0
+            ),
             profile=merge_profile,
             tau_text=tau_text,
             tau_audio=tau_audio,
             strategy_name="genre_prior",
         )
-        gold_label = majority_label([str(row["gold_emotion_core"]) for row in poem_rows])
+        gold_label = majority_label(
+            [str(row["gold_emotion_core"]) for row in poem_rows]
+        )
         full_fusion_poem_true.append(labels.index(gold_label))
         full_fusion_poem_pred.append(labels.index(final["emotion_poem_final"]))
         full_fusion_probs.append(conditioned.tolist())
@@ -600,7 +700,10 @@ def evaluate_fusion_variants(
             )
         )
         full_dms_hits += int(final["dms_poem"])
-        full_plausibility_hits += int(final["emotion_poem_final"] in set(get_genre_expected_emotions(genre, merge_profile)))
+        full_plausibility_hits += int(
+            final["emotion_poem_final"]
+            in set(get_genre_expected_emotions(genre, merge_profile))
+        )
         per_poem_full[poem_id] = {
             **text_summary,
             **audio_summary,
@@ -609,22 +712,17 @@ def evaluate_fusion_variants(
             "gold_poem_emotion": gold_label,
         }
 
-    all_label_ids = list(range(len(labels)))
     systems["full_fusion"] = {
-        "poem_metrics": {
-            "hard_macro_f1": round(float(f1_score(full_fusion_poem_true, full_fusion_poem_pred, average="macro", zero_division=0)), 4),
-            "accuracy": round(sum(int(p == t) for p, t in zip(full_fusion_poem_pred, full_fusion_poem_true)) / max(len(full_fusion_poem_true), 1), 4),
-            "balanced_accuracy": round(balanced_accuracy(full_fusion_poem_true, full_fusion_poem_pred), 4),
-            "ndcg_at_3": round(float(np.mean(full_ndcg_scores)) if full_ndcg_scores else 0.0, 4),
-            "top3_accuracy": round(_poem_top3_accuracy(full_fusion_probs, full_fusion_poem_true), 4),
-            "top2_accuracy": round(_poem_top2_accuracy(full_fusion_probs, full_fusion_poem_true), 4),
-            "log_loss": round(log_loss_safe(full_fusion_poem_true, full_fusion_probs, labels=all_label_ids), 4),
-            "ece": round(expected_calibration_error(full_fusion_probs, full_fusion_poem_true), 4),
-            "mean_partial_credit": round(float(np.mean(full_partial_scores)), 4),
-            "genre_plausibility_rate": round(full_plausibility_hits / max(len(full_fusion_poem_true), 1), 4),
-            "dms_rate": round(full_dms_hits / max(len(full_fusion_poem_true), 1), 4),
-            "n_poems": len(full_fusion_poem_true),
-        },
+        "poem_metrics": _build_poem_metrics(
+            true_ids=full_fusion_poem_true,
+            pred_ids=full_fusion_poem_pred,
+            probs=full_fusion_probs,
+            ndcg_scores=full_ndcg_scores,
+            partial_scores=full_partial_scores,
+            plausibility_hits=full_plausibility_hits,
+            dms_hits=full_dms_hits,
+            n_labels=len(labels),
+        ),
     }
     detailed_predictions["full_fusion"] = per_poem_full
 
@@ -654,12 +752,20 @@ def main() -> None:
     tokenizer, model = load_text_emotion_model(device, args.checkpoint, len(labels))
 
     train_rows = load_jsonl(TRAIN_PATH)
-    val_rows = build_windowed_rows(load_jsonl(VAL_PATH), args.context_window, args.merge_profile)
-    test_rows = build_windowed_rows(load_jsonl(TEST_PATH), args.context_window, args.merge_profile)
+    val_rows = build_windowed_rows(
+        load_jsonl(VAL_PATH), args.context_window, args.merge_profile
+    )
+    test_rows = build_windowed_rows(
+        load_jsonl(TEST_PATH), args.context_window, args.merge_profile
+    )
     batched_text_emotion_inference(val_rows, tokenizer, model, labels, device)
     batched_text_emotion_inference(test_rows, tokenizer, model, labels, device)
 
-    methods = ["mean", "conf_weighted", "logit_mean", "vote"] if args.poem_aggregation == "all" else [args.poem_aggregation]
+    methods = (
+        ["mean", "conf_weighted", "logit_mean", "vote"]
+        if args.poem_aggregation == "all"
+        else [args.poem_aggregation]
+    )
     aggregation_eval = {
         "run_id": args.run_id,
         "merge_profile": args.merge_profile,
@@ -696,13 +802,19 @@ def main() -> None:
             device=device,
             include_full_fusion=False,
         )
-        poem_f1 = candidate_report["systems"]["genre_prior"]["poem_metrics"]["hard_macro_f1"]
+        poem_f1 = candidate_report["systems"]["genre_prior"]["poem_metrics"][
+            "hard_macro_f1"
+        ]
         if poem_f1 > best_f1:
             best_f1 = poem_f1
             best_lam = lam
 
-    val_audio_summaries = build_poem_audio_summaries(val_grouped, device, args.merge_profile)
-    test_audio_summaries = build_poem_audio_summaries(test_grouped, device, args.merge_profile)
+    val_audio_summaries = build_poem_audio_summaries(
+        val_grouped, device, args.merge_profile
+    )
+    test_audio_summaries = build_poem_audio_summaries(
+        test_grouped, device, args.merge_profile
+    )
     val_report, val_predictions = evaluate_fusion_variants(
         split_name="val",
         grouped_rows=val_grouped,
@@ -743,7 +855,12 @@ def main() -> None:
         "metric_tiers": {
             "primary": ["poem_macro_f1", "ndcg_at_3", "top3_accuracy"],
             "secondary": ["log_loss", "balanced_accuracy"],
-            "constraint": ["partial_credit", "genre_plausibility_rate", "dms_rate", "ece"],
+            "constraint": [
+                "partial_credit",
+                "genre_plausibility_rate",
+                "dms_rate",
+                "ece",
+            ],
         },
         "val": val_report,
         "test": test_report,
@@ -761,7 +878,9 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    logger.success("Aggregation report → {}", REPORT_DIR / "poem_emotion_aggregation_eval.json")
+    logger.success(
+        "Aggregation report → {}", REPORT_DIR / "poem_emotion_aggregation_eval.json"
+    )
     logger.success("Fusion report → {}", REPORT_DIR / "emotion_fusion_eval.json")
     logger.success("Poem predictions (val/test) written for demo lookup.")
 

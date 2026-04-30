@@ -66,7 +66,9 @@ class GenreTextDataset(Dataset):
         }
 
 
-def compute_ece(probabilities: torch.Tensor, labels: torch.Tensor, n_bins: int = 10) -> float:
+def compute_ece(
+    probabilities: torch.Tensor, labels: torch.Tensor, n_bins: int = 10
+) -> float:
     confidences, predictions = probabilities.max(dim=1)
     correctness = predictions.eq(labels).float()
     boundaries = torch.linspace(0.0, 1.0, steps=n_bins + 1, device=probabilities.device)
@@ -78,11 +80,15 @@ def compute_ece(probabilities: torch.Tensor, labels: torch.Tensor, n_bins: int =
         else:
             mask = (confidences >= lower) & (confidences < upper)
         if mask.any():
-            ece = ece + mask.float().mean() * torch.abs(correctness[mask].mean() - confidences[mask].mean())
+            ece = ece + mask.float().mean() * torch.abs(
+                correctness[mask].mean() - confidences[mask].mean()
+            )
     return float(ece.item())
 
 
-def collect_logits(model, loader, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+def collect_logits(
+    model, loader, device: torch.device
+) -> tuple[torch.Tensor, torch.Tensor]:
     logits_list: list[torch.Tensor] = []
     labels_list: list[torch.Tensor] = []
     model.eval()
@@ -99,11 +105,15 @@ def collect_logits(model, loader, device: torch.device) -> tuple[torch.Tensor, t
     return torch.cat(logits_list, dim=0), torch.cat(labels_list, dim=0)
 
 
-def nll_from_logits(logits: torch.Tensor, labels: torch.Tensor, temperature: torch.Tensor) -> torch.Tensor:
+def nll_from_logits(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: torch.Tensor
+) -> torch.Tensor:
     return F.cross_entropy(logits / temperature, labels)
 
 
-def evaluate_split(logits: torch.Tensor, labels: torch.Tensor, temperature: float) -> dict[str, float]:
+def evaluate_split(
+    logits: torch.Tensor, labels: torch.Tensor, temperature: float
+) -> dict[str, float]:
     scaled = logits / temperature
     probs = torch.softmax(scaled, dim=1)
     preds = probs.argmax(dim=1)
@@ -135,14 +145,30 @@ def build_model(model_name: str, checkpoint_path: Path, device: torch.device):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name", default="faisalq/bert-base-arapoembert")
-    parser.add_argument("--checkpoint", type=Path, default=Path("outputs/models/arapoem_genre/arapoem_genre_best.pt"))
-    parser.add_argument("--val-jsonl", type=Path, default=Path("data/processed/val.jsonl"))
-    parser.add_argument("--test-jsonl", type=Path, default=Path("data/processed/test.jsonl"))
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=Path("outputs/models/arapoem_genre/arapoem_genre_best.pt"),
+    )
+    parser.add_argument(
+        "--val-jsonl", type=Path, default=Path("data/processed/val.jsonl")
+    )
+    parser.add_argument(
+        "--test-jsonl", type=Path, default=Path("data/processed/test.jsonl")
+    )
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-seq-len", type=int, default=32)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output", type=Path, default=Path("outputs/reports/genre_temperature_scaling.json"))
-    parser.add_argument("--temperature-out", type=Path, default=Path("outputs/reports/genre_temperature.txt"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("outputs/reports/genre_temperature_scaling.json"),
+    )
+    parser.add_argument(
+        "--temperature-out",
+        type=Path,
+        default=Path("outputs/reports/genre_temperature.txt"),
+    )
     return parser.parse_args()
 
 
@@ -150,7 +176,11 @@ def main(args: argparse.Namespace) -> float:
     logger.add("logs/calibrate_genre.log", rotation="10 MB")
     set_seed(args.seed)
     device = torch.device(
-        "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
     )
 
     if not args.checkpoint.exists():
@@ -187,13 +217,17 @@ def main(args: argparse.Namespace) -> float:
         "num_classes": len(GENRE_CLASSES),
         "temperature": round(temperature, 6),
         "validation_before": evaluate_split(val_logits, val_labels, temperature=1.0),
-        "validation_after": evaluate_split(val_logits, val_labels, temperature=temperature),
+        "validation_after": evaluate_split(
+            val_logits, val_labels, temperature=temperature
+        ),
         "test_before": evaluate_split(test_logits, test_labels, temperature=1.0),
         "test_after": evaluate_split(test_logits, test_labels, temperature=temperature),
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    args.output.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     args.temperature_out.write_text(f"{temperature:.8f}\n", encoding="utf-8")
 
     logger.success(

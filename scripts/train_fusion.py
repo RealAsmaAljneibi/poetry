@@ -15,7 +15,9 @@ import sys
 from pathlib import Path
 
 import librosa
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,13 +29,15 @@ from transformers import AutoConfig, AutoModelForSequenceClassification, AutoTok
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import matplotlib.pyplot as plt
-import seaborn as sns
-
 from src.data.labels import GENRE_CLASSES, encode_genre
 from src.models.audio_cnn import Emotion1DCNN
 from src.models.fusion import NabatiMultimodalFusion
-from src.training.trainer import EarlyStopper, TensorBoardLogger, get_scheduler, set_seed
+from src.training.trainer import (
+    EarlyStopper,
+    TensorBoardLogger,
+    get_scheduler,
+    set_seed,
+)
 
 
 class FusionGenreDataset(Dataset):
@@ -68,7 +72,9 @@ class FusionGenreDataset(Dataset):
             if not text or label == -1 or not audio_path.exists():
                 skipped += 1
                 continue
-            self.samples.append({"text": text, "label": label, "audio_path": audio_path})
+            self.samples.append(
+                {"text": text, "label": label, "audio_path": audio_path}
+            )
 
         logger.info(
             f"FusionGenreDataset: {len(self.samples)} samples from {jsonl_path.name} "
@@ -90,7 +96,9 @@ class FusionGenreDataset(Dataset):
             noise_amp = 0.005 * float(np.random.uniform()) * peak
             wav = wav + noise_amp * np.random.normal(size=wav.shape).astype(np.float32)
 
-        mel = librosa.feature.melspectrogram(y=wav, sr=self.sample_rate, n_mels=self.n_mels)
+        mel = librosa.feature.melspectrogram(
+            y=wav, sr=self.sample_rate, n_mels=self.n_mels
+        )
         mel_db = librosa.power_to_db(mel, ref=np.max).astype(np.float32)
         return torch.tensor(mel_db, dtype=torch.float32)
 
@@ -113,7 +121,9 @@ class FusionGenreDataset(Dataset):
 
 def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     max_t = max(item["mel"].shape[-1] for item in batch)
-    mel = torch.stack([F.pad(item["mel"], (0, max_t - item["mel"].shape[-1])) for item in batch])
+    mel = torch.stack(
+        [F.pad(item["mel"], (0, max_t - item["mel"].shape[-1])) for item in batch]
+    )
     return {
         "input_ids": torch.stack([item["input_ids"] for item in batch]),
         "attention_mask": torch.stack([item["attention_mask"] for item in batch]),
@@ -122,12 +132,16 @@ def collate_fn(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     }
 
 
-def compute_ece(probabilities: list[list[float]], labels: list[int], n_bins: int = 10) -> float:
+def compute_ece(
+    probabilities: list[list[float]], labels: list[int], n_bins: int = 10
+) -> float:
     if not probabilities:
         return 0.0
 
     confidences = np.array([max(row) for row in probabilities], dtype=np.float32)
-    predictions = np.array([int(np.argmax(row)) for row in probabilities], dtype=np.int64)
+    predictions = np.array(
+        [int(np.argmax(row)) for row in probabilities], dtype=np.int64
+    )
     truth = np.array(labels, dtype=np.int64)
     correctness = (predictions == truth).astype(np.float32)
     boundaries = np.linspace(0.0, 1.0, n_bins + 1)
@@ -139,15 +153,27 @@ def compute_ece(probabilities: list[list[float]], labels: list[int], n_bins: int
         else:
             mask = (confidences >= lower) & (confidences < upper)
         if mask.any():
-            ece += float(mask.mean() * abs(correctness[mask].mean() - confidences[mask].mean()))
+            ece += float(
+                mask.mean() * abs(correctness[mask].mean() - confidences[mask].mean())
+            )
     return float(ece)
 
 
-def make_confusion_figure(y_true: list[int], y_pred: list[int], title: str) -> plt.Figure:
+def make_confusion_figure(
+    y_true: list[int], y_pred: list[int], title: str
+) -> plt.Figure:
     cm = confusion_matrix(y_true, y_pred, labels=list(range(len(GENRE_CLASSES))))
     short_names = [label.split("(")[0].strip() for label in GENRE_CLASSES]
     fig, ax = plt.subplots(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=short_names, yticklabels=short_names, ax=ax)
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=short_names,
+        yticklabels=short_names,
+        ax=ax,
+    )
     ax.set_xlabel("Predicted")
     ax.set_ylabel("True")
     ax.set_title(title)
@@ -157,7 +183,12 @@ def make_confusion_figure(y_true: list[int], y_pred: list[int], title: str) -> p
     return fig
 
 
-def load_text_encoder(model_name: str, checkpoint_path: Path | None, num_classes: int, device: torch.device):
+def load_text_encoder(
+    model_name: str,
+    checkpoint_path: Path | None,
+    num_classes: int,
+    device: torch.device,
+):
     config = AutoConfig.from_pretrained(model_name, local_files_only=True)
     config.num_labels = num_classes
     text_classifier = AutoModelForSequenceClassification.from_pretrained(
@@ -174,11 +205,15 @@ def load_text_encoder(model_name: str, checkpoint_path: Path | None, num_classes
             f"(missing={len(missing)}, unexpected={len(unexpected)})"
         )
     elif checkpoint_path is not None:
-        logger.warning(f"Text checkpoint not found: {checkpoint_path} — using base model weights")
+        logger.warning(
+            f"Text checkpoint not found: {checkpoint_path} — using base model weights"
+        )
     return text_classifier.base_model
 
 
-def load_audio_encoder(checkpoint_path: Path | None, device: torch.device) -> Emotion1DCNN:
+def load_audio_encoder(
+    checkpoint_path: Path | None, device: torch.device
+) -> Emotion1DCNN:
     audio_encoder = Emotion1DCNN(num_classes=12).to(device)
     if checkpoint_path is not None and checkpoint_path.exists():
         state = torch.load(checkpoint_path, map_location=device)
@@ -188,7 +223,9 @@ def load_audio_encoder(checkpoint_path: Path | None, device: torch.device) -> Em
             f"(missing={len(missing)}, unexpected={len(unexpected)})"
         )
     elif checkpoint_path is not None:
-        logger.warning(f"Audio checkpoint not found: {checkpoint_path} — using randomly initialized CNN")
+        logger.warning(
+            f"Audio checkpoint not found: {checkpoint_path} — using randomly initialized CNN"
+        )
     return audio_encoder
 
 
@@ -221,7 +258,9 @@ def run_epoch(
         if is_train:
             optimizer.zero_grad()
 
-        logits = model(input_ids=input_ids, attention_mask=attention_mask, mel_spec=mel, mode=mode)
+        logits = model(
+            input_ids=input_ids, attention_mask=attention_mask, mel_spec=mel, mode=mode
+        )
         loss = criterion(logits, labels)
 
         if is_train:
@@ -242,7 +281,9 @@ def run_epoch(
 
     avg_loss = total_loss / max(len(loader), 1)
     macro_f1 = f1_score(all_true, all_preds, average="macro", zero_division=0)
-    accuracy = sum(int(p == t) for p, t in zip(all_preds, all_true)) / max(len(all_true), 1)
+    accuracy = sum(int(p == t) for p, t in zip(all_preds, all_true)) / max(
+        len(all_true), 1
+    )
     return avg_loss, macro_f1, accuracy, all_preds, all_true, all_probs, global_step
 
 
@@ -259,15 +300,33 @@ def evaluate(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fusion-strategy", choices=["concat", "gated", "cross_attn"], default="gated")
-    parser.add_argument("--mode", choices=["fusion", "text_only", "audio_only"], default="fusion")
+    parser.add_argument(
+        "--fusion-strategy", choices=["concat", "gated", "cross_attn"], default="gated"
+    )
+    parser.add_argument(
+        "--mode", choices=["fusion", "text_only", "audio_only"], default="fusion"
+    )
     parser.add_argument("--text-model-name", default="faisalq/bert-base-arapoembert")
-    parser.add_argument("--text-checkpoint", type=Path, default=Path("outputs/models/arapoem_genre/arapoem_genre_best.pt"))
-    parser.add_argument("--audio-checkpoint", type=Path, default=Path("outputs/models/audio_cnn/audio_cnn_emotion_best.pt"))
+    parser.add_argument(
+        "--text-checkpoint",
+        type=Path,
+        default=Path("outputs/models/arapoem_genre/arapoem_genre_best.pt"),
+    )
+    parser.add_argument(
+        "--audio-checkpoint",
+        type=Path,
+        default=Path("outputs/models/audio_cnn/audio_cnn_emotion_best.pt"),
+    )
     parser.add_argument("--fusion-checkpoint", type=Path, default=None)
-    parser.add_argument("--train-jsonl", type=Path, default=Path("data/processed/train.jsonl"))
-    parser.add_argument("--val-jsonl", type=Path, default=Path("data/processed/val.jsonl"))
-    parser.add_argument("--test-jsonl", type=Path, default=Path("data/processed/test.jsonl"))
+    parser.add_argument(
+        "--train-jsonl", type=Path, default=Path("data/processed/train.jsonl")
+    )
+    parser.add_argument(
+        "--val-jsonl", type=Path, default=Path("data/processed/val.jsonl")
+    )
+    parser.add_argument(
+        "--test-jsonl", type=Path, default=Path("data/processed/test.jsonl")
+    )
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
@@ -281,7 +340,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--unfreeze-encoders", action="store_true")
     parser.add_argument("--eval-only", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/models/fusion"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("outputs/models/fusion")
+    )
     parser.add_argument("--report-path", type=Path, default=None)
     return parser
 
@@ -290,10 +351,16 @@ def main(args: argparse.Namespace) -> float:
     logger.add("logs/train_fusion.log", rotation="10 MB")
     set_seed(args.seed)
     device = torch.device(
-        "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(args.text_model_name, local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.text_model_name, local_files_only=True
+    )
     train_ds = FusionGenreDataset(
         args.train_jsonl,
         tokenizer,
@@ -316,11 +383,19 @@ def main(args: argparse.Namespace) -> float:
         is_train=False,
     )
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn
+    )
+    test_loader = DataLoader(
+        test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn
+    )
 
-    text_encoder = load_text_encoder(args.text_model_name, args.text_checkpoint, len(GENRE_CLASSES), device)
+    text_encoder = load_text_encoder(
+        args.text_model_name, args.text_checkpoint, len(GENRE_CLASSES), device
+    )
     audio_encoder = load_audio_encoder(args.audio_checkpoint, device)
     model_tag = f"fusion_{args.fusion_strategy}_{args.mode}"
     model = NabatiMultimodalFusion(
@@ -334,13 +409,19 @@ def main(args: argparse.Namespace) -> float:
         freeze_encoders=not args.unfreeze_encoders,
     ).to(device)
 
-    train_labels = np.array([sample["label"] for sample in train_ds.samples], dtype=np.int64)
+    train_labels = np.array(
+        [sample["label"] for sample in train_ds.samples], dtype=np.int64
+    )
     present_classes = np.unique(train_labels)
-    class_weights_present = compute_class_weight("balanced", classes=present_classes, y=train_labels)
+    class_weights_present = compute_class_weight(
+        "balanced", classes=present_classes, y=train_labels
+    )
     class_weights = np.ones(len(GENRE_CLASSES), dtype=np.float32)
     for label_id, weight in zip(present_classes, class_weights_present):
         class_weights[int(label_id)] = float(weight)
-    criterion = nn.CrossEntropyLoss(weight=torch.tensor(class_weights, dtype=torch.float32, device=device))
+    criterion = nn.CrossEntropyLoss(
+        weight=torch.tensor(class_weights, dtype=torch.float32, device=device)
+    )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     fusion_ckpt = args.fusion_checkpoint or args.output_dir / f"{model_tag}_best.pt"
@@ -359,8 +440,12 @@ def main(args: argparse.Namespace) -> float:
             weight_decay=args.weight_decay,
         )
         total_steps = max(len(train_loader) * args.epochs, 1)
-        scheduler = get_scheduler(optimizer, total_steps=total_steps, warmup_ratio=args.warmup_ratio)
-        tb_logger = TensorBoardLogger(Path("outputs/runs"), "fusion", f"{args.fusion_strategy}_{args.mode}")
+        scheduler = get_scheduler(
+            optimizer, total_steps=total_steps, warmup_ratio=args.warmup_ratio
+        )
+        tb_logger = TensorBoardLogger(
+            Path("outputs/runs"), "fusion", f"{args.fusion_strategy}_{args.mode}"
+        )
         early_stopper = EarlyStopper(args.patience, args.output_dir, model_tag)
         global_step = 0
         best_val_f1 = 0.0
@@ -393,8 +478,12 @@ def main(args: argparse.Namespace) -> float:
             )
 
             if (epoch + 1) % 5 == 0:
-                fig = make_confusion_figure(val_true, val_preds, f"Fusion Val Confusion — Epoch {epoch + 1}")
-                tb_logger.log_confusion_matrix(fig, f"confusion/fusion/{args.mode}", epoch)
+                fig = make_confusion_figure(
+                    val_true, val_preds, f"Fusion Val Confusion — Epoch {epoch + 1}"
+                )
+                tb_logger.log_confusion_matrix(
+                    fig, f"confusion/fusion/{args.mode}", epoch
+                )
                 plt.close(fig)
 
             if early_stopper.step(val_f1, model):
@@ -441,7 +530,9 @@ def main(args: argparse.Namespace) -> float:
         "fusion_strategy": args.fusion_strategy,
         "mode": args.mode,
         "freeze_encoders": not args.unfreeze_encoders,
-        "best_val_macro_f1": None if np.isnan(best_val_f1) else round(float(best_val_f1), 4),
+        "best_val_macro_f1": None
+        if np.isnan(best_val_f1)
+        else round(float(best_val_f1), 4),
         "test_macro_f1": round(float(test_f1), 4),
         "test_accuracy": round(float(test_acc), 4),
         "test_ece": round(float(ece), 4),
@@ -452,7 +543,9 @@ def main(args: argparse.Namespace) -> float:
     }
 
     if args.fusion_strategy == "gated" and args.mode == "fusion":
-        gate_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+        gate_loader = DataLoader(
+            val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn
+        )
         batch = next(iter(gate_loader))
         with torch.no_grad():
             gate_weights = model.get_gate_weights(
@@ -460,11 +553,17 @@ def main(args: argparse.Namespace) -> float:
                 batch["attention_mask"].to(device),
                 batch["mel"].to(device),
             )
-        summary["val_gate_mean_text"] = round(float(gate_weights[:, 0].mean().item()), 4)
-        summary["val_gate_mean_audio"] = round(float(gate_weights[:, 1].mean().item()), 4)
+        summary["val_gate_mean_text"] = round(
+            float(gate_weights[:, 0].mean().item()), 4
+        )
+        summary["val_gate_mean_audio"] = round(
+            float(gate_weights[:, 1].mean().item()), 4
+        )
 
     json_path = args.report_path or report_dir / f"{model_tag}.json"
-    json_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     logger.success(
         f"Fusion complete | strategy={args.fusion_strategy} | mode={args.mode} | "
         f"test_F1={test_f1:.4f} | acc={test_acc:.4f} | ECE={ece:.4f}"
@@ -480,7 +579,10 @@ def main(args: argparse.Namespace) -> float:
                 "batch_size": args.batch_size,
                 "epochs": args.epochs,
             },
-            metric_dict={"hparam/test_macro_f1": float(test_f1), "hparam/test_acc": float(test_acc)},
+            metric_dict={
+                "hparam/test_macro_f1": float(test_f1),
+                "hparam/test_acc": float(test_acc),
+            },
         )
         tb_logger.close()
 

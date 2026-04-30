@@ -32,35 +32,33 @@ from sklearn.preprocessing import LabelEncoder
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.models.retrieval import NabatiRetriever
 
-CNN_CKPT   = Path("outputs/models/audio_cnn/audio_cnn_emotion_best.pt")
-AUDIO_DIM  = 512
-MAX_SEC    = 8
+CNN_CKPT = Path("outputs/models/audio_cnn/audio_cnn_emotion_best.pt")
+AUDIO_DIM = 512
+MAX_SEC = 8
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-DATA_DIR   = Path("data/processed")
+DATA_DIR = Path("data/processed")
 OUTPUT_DIR = Path("outputs/retrieval")
 REPORT_DIR = Path("outputs/reports")
 
 SPLITS = {
     "train": DATA_DIR / "train.jsonl",
-    "val":   DATA_DIR / "val.jsonl",
-    "test":  DATA_DIR / "test.jsonl",
+    "val": DATA_DIR / "val.jsonl",
+    "test": DATA_DIR / "test.jsonl",
 }
 
 # ── t-SNE genre map ───────────────────────────────────────────────────────────
 
+
 def plot_tsne(retriever: NabatiRetriever, out_path: Path) -> None:
     """
     Project all AraPoemBERT embeddings to 2-D with t-SNE and colour by genre.
-
-    Projects all AraPoemBERT embeddings to 2-D with t-SNE and colours by genre.
-    If genre clusters are visible without any classification head, it confirms
-    the pre-trained model has learned genre-meaningful representations,
-    validating the semantic search approach.
+    If genre clusters are visible without a classification head, the pre-trained
+    model has learned genre-meaningful representations.
     """
 
     # Reconstruct stored vectors from FAISS index
-    n   = retriever.text_index.ntotal
+    n = retriever.text_index.ntotal
     dim = retriever.TEXT_DIM
     vecs = np.zeros((n, dim), dtype=np.float32)
     retriever.text_index.reconstruct_n(0, n, vecs)  # type: ignore[arg-type]
@@ -69,23 +67,24 @@ def plot_tsne(retriever: NabatiRetriever, out_path: Path) -> None:
 
     # Filter to genres with at least 10 samples for a clean plot
     from collections import Counter
+
     counts = Counter(genres)
-    keep   = {g for g, c in counts.items() if c >= 10}
-    mask   = [i for i, g in enumerate(genres) if g in keep]
+    keep = {g for g, c in counts.items() if c >= 10}
+    mask = [i for i, g in enumerate(genres) if g in keep]
 
     if len(mask) < 20:
         logger.warning("Too few samples to plot t-SNE — skipping.")
         return
 
-    vecs_plot   = vecs[mask]
+    vecs_plot = vecs[mask]
     genres_plot = [genres[i] for i in mask]
 
     logger.info(f"Running t-SNE on {len(mask)} samples ({len(keep)} genres)...")
-    tsne   = TSNE(n_components=2, perplexity=30, random_state=42, max_iter=1000)
+    tsne = TSNE(n_components=2, perplexity=30, random_state=42, max_iter=1000)
     coords = tsne.fit_transform(vecs_plot)
 
     # Silhouette score (how separable are the genre clusters?)
-    le     = LabelEncoder()
+    le = LabelEncoder()
     labels = le.fit_transform(genres_plot)
     try:
         sil = silhouette_score(coords, labels)
@@ -102,10 +101,12 @@ def plot_tsne(retriever: NabatiRetriever, out_path: Path) -> None:
     for genre in unique_genres:
         idx = [i for i, g in enumerate(genres_plot) if g == genre]
         ax.scatter(
-            coords[idx, 0], coords[idx, 1],
+            coords[idx, 0],
+            coords[idx, 1],
             c=[genre2color[genre]],
             label=f"{genre} ({len(idx)})",
-            alpha=0.65, s=18,
+            alpha=0.65,
+            s=18,
         )
 
     ax.legend(fontsize=8, loc="upper right", framealpha=0.7)
@@ -128,12 +129,13 @@ def plot_tsne(retriever: NabatiRetriever, out_path: Path) -> None:
 # ── Sample queries ────────────────────────────────────────────────────────────
 
 SAMPLE_QUERIES = [
-    ("الحب والغزل والشوق",          None),        # love / longing — expect Ghazal
-    ("الحزن والفقد والرثاء",         None),        # grief / elegy — expect Ritha
-    ("الوطن والانتماء والفخر",       "Wataniyya"), # nation / pride — with genre filter
-    ("الحكمة والتأمل في الحياة",     None),        # wisdom — expect Hikma
-    ("longing and love",             None),        # English query
+    ("الحب والغزل والشوق", None),  # love / longing — expect Ghazal
+    ("الحزن والفقد والرثاء", None),  # grief / elegy — expect Ritha
+    ("الوطن والانتماء والفخر", "Wataniyya"),  # nation / pride — with genre filter
+    ("الحكمة والتأمل في الحياة", None),  # wisdom — expect Hikma
+    ("longing and love", None),  # English query
 ]
+
 
 def run_sample_queries(retriever: NabatiRetriever) -> None:
     logger.info("=" * 60)
@@ -153,6 +155,7 @@ def run_sample_queries(retriever: NabatiRetriever) -> None:
 
 # ── Audio embedding extraction ────────────────────────────────────────────────
 
+
 def build_audio_index(retriever: NabatiRetriever, device: str) -> bool:
     """
     Extract 512-dim CNN embeddings for every indexed record and add audio.index.
@@ -162,7 +165,9 @@ def build_audio_index(retriever: NabatiRetriever, device: str) -> bool:
     from src.models.audio_cnn import Emotion1DCNN
 
     if not CNN_CKPT.exists():
-        logger.warning(f"CNN checkpoint not found at {CNN_CKPT} — skipping audio index.")
+        logger.warning(
+            f"CNN checkpoint not found at {CNN_CKPT} — skipping audio index."
+        )
         return False
 
     dev = torch.device(device)
@@ -202,11 +207,14 @@ def build_audio_index(retriever: NabatiRetriever, device: str) -> bool:
 
     audio_vecs = np.stack(vecs)
     retriever.add_audio_embeddings(audio_vecs)
-    logger.success(f"Audio index built: {audio_vecs.shape[0]} embeddings (dim={AUDIO_DIM})")
+    logger.success(
+        f"Audio index built: {audio_vecs.shape[0]} embeddings (dim={AUDIO_DIM})"
+    )
     return True
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main(args: argparse.Namespace) -> None:
     logger.add("logs/retrieval.log", rotation="10 MB")
@@ -263,24 +271,26 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build NabatiRetriever index")
     parser.add_argument(
-        "--splits", nargs="+", default=["train", "val", "test"],
+        "--splits",
+        nargs="+",
+        default=["train", "val", "test"],
         choices=["train", "val", "test"],
-        help="Which JSONL splits to index (default: all three)"
+        help="Which JSONL splits to index (default: all three)",
     )
     parser.add_argument(
-        "--device", default="cpu",
-        help="torch device for encoding (cpu / mps / cuda)"
+        "--device", default="cpu", help="torch device for encoding (cpu / mps / cuda)"
     )
     parser.add_argument(
-        "--query", default=None,
-        help="Run a single custom query after building the index"
+        "--query",
+        default=None,
+        help="Run a single custom query after building the index",
     )
     parser.add_argument(
-        "--no-tsne", action="store_true",
-        help="Skip t-SNE plot (faster)"
+        "--no-tsne", action="store_true", help="Skip t-SNE plot (faster)"
     )
     parser.add_argument(
-        "--no-audio", action="store_true",
-        help="Skip audio CNN embedding index (text-only)"
+        "--no-audio",
+        action="store_true",
+        help="Skip audio CNN embedding index (text-only)",
     )
     main(parser.parse_args())

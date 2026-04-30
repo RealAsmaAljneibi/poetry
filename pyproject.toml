@@ -26,6 +26,7 @@ dependencies = [
     "gradio>=5.0.0",
     "setuptools<70",
     "plotly>=6.6.0",
+    "demucs>=4.0.1",
 ]
 
 [dependency-groups]

@@ -50,6 +50,7 @@ os.environ.setdefault("HF_HUB_VERBOSITY", "error")
 # a base model before the fine-tuned state_dict is applied — harmless.
 # attention_mask and SuppressTokens warnings are internal HF generation details.
 import transformers as _tf
+
 _tf.logging.set_verbosity_error()
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("peft").setLevel(logging.ERROR)
@@ -72,28 +73,30 @@ from models.retrieval import NabatiRetriever  # noqa: E402
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 
-PROJECT_ROOT     = Path(__file__).parent.parent
-LOCAL_MODEL_DIR  = PROJECT_ROOT / "models" / "local"
+PROJECT_ROOT = Path(__file__).parent.parent
+LOCAL_MODEL_DIR = PROJECT_ROOT / "models" / "local"
 WHISPER_MODEL_DIR = LOCAL_MODEL_DIR / "whisper-small"
 ARAPOEM_MODEL_DIR = LOCAL_MODEL_DIR / "arapoembert"
-GENRE_CKPT       = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
-EMOTION_CKPT     = PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
-AROUSAL_CKPT     = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_mlp_arousal_best.pt"
-AROUSAL_SCALER   = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_scaler.pkl"
-CNN_CKPT         = PROJECT_ROOT / "outputs/models/audio_cnn/audio_cnn_emotion_best.pt"
-WHISPER_ADAPTER  = PROJECT_ROOT / "outputs/models/whisper_nabati/best"
-RETRIEVAL_DIR    = PROJECT_ROOT / "outputs/retrieval"
+GENRE_CKPT = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
+EMOTION_CKPT = (
+    PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+)
+AROUSAL_CKPT = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_mlp_arousal_best.pt"
+AROUSAL_SCALER = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_scaler.pkl"
+CNN_CKPT = PROJECT_ROOT / "outputs/models/audio_cnn/audio_cnn_emotion_best.pt"
+WHISPER_ADAPTER = PROJECT_ROOT / "outputs/models/whisper_nabati/best"
+RETRIEVAL_DIR = PROJECT_ROOT / "outputs/retrieval"
 POEM_PREDICTION_FILES = [
     PROJECT_ROOT / "outputs/reports/poem_emotion_predictions_test.json",
     PROJECT_ROOT / "outputs/reports/poem_emotion_predictions_val.json",
 ]
 
-ARAPOEM_MODEL  = "faisalq/bert-base-arapoembert"
-WHISPER_MODEL  = "openai/whisper-small"
-SAMPLE_RATE    = 16_000
-MAX_AUDIO_SEC  = 30
-MAX_SEQ_LEN    = 32   # AraPoemBERT hard limit
-N_MFCC         = 13
+ARAPOEM_MODEL = "faisalq/bert-base-arapoembert"
+WHISPER_MODEL = "openai/whisper-small"
+SAMPLE_RATE = 16_000
+MAX_AUDIO_SEC = 30
+MAX_SEQ_LEN = 32  # AraPoemBERT hard limit
+N_MFCC = 13
 EMOTION_TEXT_CLASSES = get_merged_emotion_classes("rare_merge_v1")
 
 os.environ.setdefault("NABAT_ARAPOEM_MODEL_DIR", str(ARAPOEM_MODEL_DIR))
@@ -101,7 +104,14 @@ os.environ.setdefault("NABAT_WHISPER_MODEL_DIR", str(WHISPER_MODEL_DIR))
 
 
 def _has_model_weights(model_dir: Path) -> bool:
-    return any((model_dir / name).exists() for name in ("model.safetensors", "pytorch_model.bin", "model.safetensors.index.json"))
+    return any(
+        (model_dir / name).exists()
+        for name in (
+            "model.safetensors",
+            "pytorch_model.bin",
+            "model.safetensors.index.json",
+        )
+    )
 
 
 def _runtime_asset_error() -> str:
@@ -123,7 +133,10 @@ def get_missing_runtime_assets() -> list[str]:
     arapoem_ok = (
         ARAPOEM_MODEL_DIR.exists()
         and (ARAPOEM_MODEL_DIR / "config.json").exists()
-        and ((ARAPOEM_MODEL_DIR / "tokenizer.json").exists() or (ARAPOEM_MODEL_DIR / "tokenizer_config.json").exists())
+        and (
+            (ARAPOEM_MODEL_DIR / "tokenizer.json").exists()
+            or (ARAPOEM_MODEL_DIR / "tokenizer_config.json").exists()
+        )
         and _has_model_weights(ARAPOEM_MODEL_DIR)
     )
     if not arapoem_ok:
@@ -132,7 +145,9 @@ def get_missing_runtime_assets() -> list[str]:
     return missing
 
 
-def ensure_runtime_assets(*, require_whisper: bool = False, require_text_models: bool = False) -> None:
+def ensure_runtime_assets(
+    *, require_whisper: bool = False, require_text_models: bool = False
+) -> None:
     missing = get_missing_runtime_assets()
     needed: list[str] = []
     if require_whisper:
@@ -145,13 +160,17 @@ def ensure_runtime_assets(*, require_whisper: bool = False, require_text_models:
         joined = ", ".join(missing_needed)
         raise RuntimeError(f"{_runtime_asset_error()} Missing local assets: {joined}.")
 
+
 # ── Corpus metadata lookup ─────────────────────────────────────────────────────
+
 
 def _is_arabic(text: str, threshold: float = 0.4) -> bool:
     """Return True if at least `threshold` fraction of chars are Arabic."""
     if not text or not text.strip():
         return False
-    arabic = sum(1 for c in text if "\u0600" <= c <= "\u06ff" or "\u0750" <= c <= "\u077f")
+    arabic = sum(
+        1 for c in text if "\u0600" <= c <= "\u06ff" or "\u0750" <= c <= "\u077f"
+    )
     return arabic / max(len(text), 1) >= threshold
 
 
@@ -181,9 +200,9 @@ def lookup_poem_metadata(audio_path: Path) -> dict:
                 rec = json.loads(line)
                 if Path(rec.get("audio_filename", "")).name == filename:
                     return {
-                        "poem_title":  rec.get("poem_title") or "",
-                        "poet_en":     rec.get("poet_en") or "",
-                        "genre_en":    rec.get("genre_en") or "",
+                        "poem_title": rec.get("poem_title") or "",
+                        "poet_en": rec.get("poet_en") or "",
+                        "genre_en": rec.get("genre_en") or "",
                         "emotion_text": rec.get("emotion_text") or "",
                         "source_poem": rec.get("source_poem") or "",
                         "text_corrected": rec.get("text_corrected") or "",
@@ -213,14 +232,20 @@ def load_poem_prediction_lookup() -> dict[str, dict[str, dict]]:
     return lookup
 
 
-def _topk_predictions(probs: np.ndarray | torch.Tensor, labels: list[str], k: int = 3) -> list[RankedPrediction]:
+def _topk_predictions(
+    probs: np.ndarray | torch.Tensor, labels: list[str], k: int = 3
+) -> list[RankedPrediction]:
     if isinstance(probs, torch.Tensor):
         probs = probs.detach().cpu().numpy()
     ranked = np.argsort(probs)[::-1][:k]
-    return [RankedPrediction(label=labels[int(idx)], prob=float(probs[int(idx)])) for idx in ranked]
+    return [
+        RankedPrediction(label=labels[int(idx)], prob=float(probs[int(idx)]))
+        for idx in ranked
+    ]
 
 
 # ── ASR ───────────────────────────────────────────────────────────────────────
+
 
 def load_whisper(device: str, use_lora: bool = False):
     """Load Whisper-small baseline by default; LoRA is opt-in."""
@@ -228,15 +253,24 @@ def load_whisper(device: str, use_lora: bool = False):
 
     ensure_runtime_assets(require_whisper=True)
     try:
-        processor = WhisperProcessor.from_pretrained(str(WHISPER_MODEL_DIR), local_files_only=True)
-        base = WhisperForConditionalGeneration.from_pretrained(str(WHISPER_MODEL_DIR), local_files_only=True)
+        processor = WhisperProcessor.from_pretrained(
+            str(WHISPER_MODEL_DIR), local_files_only=True
+        )
+        base = WhisperForConditionalGeneration.from_pretrained(
+            str(WHISPER_MODEL_DIR), local_files_only=True
+        )
     except OSError as exc:
-        raise RuntimeError(f"{_runtime_asset_error()} Missing local assets: whisper-small.") from exc
+        raise RuntimeError(
+            f"{_runtime_asset_error()} Missing local assets: whisper-small."
+        ) from exc
 
     if use_lora and WHISPER_ADAPTER.exists():
         try:
             from peft import PeftModel
-            model = PeftModel.from_pretrained(base, str(WHISPER_ADAPTER), local_files_only=True)
+
+            model = PeftModel.from_pretrained(
+                base, str(WHISPER_ADAPTER), local_files_only=True
+            )
             logger.info(f"Whisper loaded with LoRA adapter → {WHISPER_ADAPTER}")
         except Exception as e:
             logger.warning(f"LoRA adapter load failed ({e}), using zero-shot Whisper")
@@ -257,7 +291,9 @@ def transcribe(audio_path: Path, processor, model, device: str) -> str:
     inputs = processor(wav, sampling_rate=SAMPLE_RATE, return_tensors="pt")
     input_features = inputs["input_features"].to(device)
     # Explicit attention_mask of all ones (no padding in single-clip inference)
-    attention_mask = torch.ones(input_features.shape[:2], dtype=torch.long, device=device)
+    attention_mask = torch.ones(
+        input_features.shape[:2], dtype=torch.long, device=device
+    )
 
     # Pass forced_decoder_ids=None to avoid duplicate SuppressTokens logits processors
     # (language/task args already create those internally in generate())
@@ -268,19 +304,26 @@ def transcribe(audio_path: Path, processor, model, device: str) -> str:
             attention_mask=attention_mask,
             forced_decoder_ids=forced_ids,
         )
-    return processor.tokenizer.decode(predicted_ids[0], skip_special_tokens=True).strip()
+    return processor.tokenizer.decode(
+        predicted_ids[0], skip_special_tokens=True
+    ).strip()
 
 
 # ── Genre classifier ──────────────────────────────────────────────────────────
 
+
 def load_genre_model(device: str):
     """Load AraPoemBERT fine-tuned for genre classification."""
     if not GENRE_CKPT.exists():
-        logger.warning(f"Genre checkpoint not found at {GENRE_CKPT} — skipping genre prediction")
+        logger.warning(
+            f"Genre checkpoint not found at {GENRE_CKPT} — skipping genre prediction"
+        )
         return None, None
 
     ensure_runtime_assets(require_text_models=True)
-    tokenizer = AutoTokenizer.from_pretrained(str(ARAPOEM_MODEL_DIR), local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(ARAPOEM_MODEL_DIR), local_files_only=True
+    )
     model = AutoModelForSequenceClassification.from_pretrained(
         str(ARAPOEM_MODEL_DIR),
         num_labels=len(GENRE_CLASSES),
@@ -294,8 +337,9 @@ def load_genre_model(device: str):
     return tokenizer, model
 
 
-def predict_genre(text: str, tokenizer, model, device: str) -> tuple[str, float, list[RankedPrediction]]:
-    """Predict genre from transcription text → (label, confidence)."""
+def _classify_text(
+    text: str, tokenizer, model, device: str, classes: list[str]
+) -> tuple[str, float, list[RankedPrediction]]:
     enc = tokenizer(
         text,
         max_length=MAX_SEQ_LEN,
@@ -310,10 +354,17 @@ def predict_genre(text: str, tokenizer, model, device: str) -> tuple[str, float,
         ).logits
     probs = F.softmax(logits, dim=-1)[0].cpu()
     idx = int(probs.argmax())
-    return GENRE_CLASSES[idx], float(probs[idx]), _topk_predictions(probs, GENRE_CLASSES)
+    return classes[idx], float(probs[idx]), _topk_predictions(probs, classes)
+
+
+def predict_genre(
+    text: str, tokenizer, model, device: str
+) -> tuple[str, float, list[RankedPrediction]]:
+    return _classify_text(text, tokenizer, model, device, GENRE_CLASSES)
 
 
 # ── Emotion-text classifier ───────────────────────────────────────────────────
+
 
 def load_emotion_model(device: str):
     """Load AraPoemBERT fine-tuned for emotion_text classification (12 classes)."""
@@ -321,7 +372,9 @@ def load_emotion_model(device: str):
         logger.warning(f"Emotion checkpoint not found at {EMOTION_CKPT}")
         return None, None
     ensure_runtime_assets(require_text_models=True)
-    tokenizer = AutoTokenizer.from_pretrained(str(ARAPOEM_MODEL_DIR), local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(
+        str(ARAPOEM_MODEL_DIR), local_files_only=True
+    )
     model = AutoModelForSequenceClassification.from_pretrained(
         str(ARAPOEM_MODEL_DIR),
         num_labels=len(EMOTION_TEXT_CLASSES),
@@ -335,37 +388,36 @@ def load_emotion_model(device: str):
     return tokenizer, model
 
 
-def predict_emotion_text(text: str, tokenizer, model, device: str) -> tuple[str, float, list[RankedPrediction]]:
-    """Predict emotion from transcription text → (label, confidence)."""
-    enc = tokenizer(
-        text,
-        max_length=MAX_SEQ_LEN,
-        padding="max_length",
-        truncation=True,
-        return_tensors="pt",
-    )
-    with torch.no_grad():
-        logits = model(
-            input_ids=enc["input_ids"].to(device),
-            attention_mask=enc["attention_mask"].to(device),
-        ).logits
-    probs = F.softmax(logits, dim=-1)[0].cpu()
-    idx = int(probs.argmax())
-    return EMOTION_TEXT_CLASSES[idx], float(probs[idx]), _topk_predictions(probs, EMOTION_TEXT_CLASSES)
+def predict_emotion_text(
+    text: str, tokenizer, model, device: str
+) -> tuple[str, float, list[RankedPrediction]]:
+    return _classify_text(text, tokenizer, model, device, EMOTION_TEXT_CLASSES)
 
 
 # ── Arousal MLP (scratch model) ───────────────────────────────────────────────
 
+
 class ArousalMLP(nn.Module):
     """Mirrors the architecture in scripts/train_arousal.py."""
-    def __init__(self, input_dim: int = 34, hidden_dim: int = 128, n_layers: int = 2,
-                 dropout: float = 0.3, n_classes: int = 3):
+
+    def __init__(
+        self,
+        input_dim: int = 34,
+        hidden_dim: int = 128,
+        n_layers: int = 2,
+        dropout: float = 0.3,
+        n_classes: int = 3,
+    ):
         super().__init__()
         layers: list[nn.Module] = []
         in_dim = input_dim
         for _ in range(n_layers):
-            layers += [nn.Linear(in_dim, hidden_dim), nn.BatchNorm1d(hidden_dim),
-                       nn.ReLU(), nn.Dropout(dropout)]
+            layers += [
+                nn.Linear(in_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+            ]
             in_dim = hidden_dim
         layers.append(nn.Linear(hidden_dim, n_classes))
         self.net = nn.Sequential(*layers)
@@ -374,8 +426,9 @@ class ArousalMLP(nn.Module):
         return self.net(x)
 
 
-def _extract_arousal_features(audio_path: Path, sr: int = 16000,
-                                max_sec: int = 30, n_mfcc: int = 13) -> np.ndarray | None:
+def _extract_arousal_features(
+    audio_path: Path, sr: int = 16000, max_sec: int = 30, n_mfcc: int = 13
+) -> np.ndarray | None:
     """Extract 34-dim librosa feature vector for arousal prediction."""
     try:
         y, _ = librosa.load(str(audio_path), sr=sr, mono=True)
@@ -409,9 +462,12 @@ def _extract_arousal_features(audio_path: Path, sr: int = 16000,
 def load_arousal_model(device: str):
     """Load ArousalMLP + StandardScaler."""
     if not AROUSAL_CKPT.exists() or not AROUSAL_SCALER.exists():
-        logger.warning("Arousal checkpoint or scaler not found — skipping arousal prediction")
+        logger.warning(
+            "Arousal checkpoint or scaler not found — skipping arousal prediction"
+        )
         return None, None
     import pickle
+
     scaler = pickle.load(open(AROUSAL_SCALER, "rb"))
     model = ArousalMLP()
     state = torch.load(AROUSAL_CKPT, map_location="cpu", weights_only=True)
@@ -437,10 +493,13 @@ def predict_arousal(audio_path: Path, scaler, model, device: str) -> tuple[str, 
 
 # ── Audio emotion CNN ─────────────────────────────────────────────────────────
 
+
 def load_cnn(device: str):
     """Load Emotion1DCNN from scratch checkpoint."""
     if not CNN_CKPT.exists():
-        logger.warning(f"CNN checkpoint not found at {CNN_CKPT} — skipping audio emotion prediction")
+        logger.warning(
+            f"CNN checkpoint not found at {CNN_CKPT} — skipping audio emotion prediction"
+        )
         return None
 
     model = Emotion1DCNN(num_classes=len(EMOTION_CLASSES))
@@ -451,16 +510,18 @@ def load_cnn(device: str):
     return model
 
 
-def predict_emotion_audio(audio_path: Path, cnn_model, device: str) -> tuple[str, float, list[RankedPrediction]]:
+def predict_emotion_audio(
+    audio_path: Path, cnn_model, device: str
+) -> tuple[str, float, list[RankedPrediction]]:
     """Extract mel-spec and predict audio emotion → (label, confidence)."""
     wav, _ = librosa.load(str(audio_path), sr=SAMPLE_RATE, mono=True)
-    wav = wav[: 8 * SAMPLE_RATE]   # CNN trained on 8s clips
+    wav = wav[: 8 * SAMPLE_RATE]  # CNN trained on 8s clips
 
     mel = librosa.feature.melspectrogram(y=wav, sr=SAMPLE_RATE, n_mels=128)
     mel_db = librosa.power_to_db(mel, ref=np.max)
 
     # Pad / trim to fixed width (CNN expects consistent T dimension)
-    target_len = 8 * SAMPLE_RATE // 512   # ~250 frames for hop_length=512
+    target_len = 8 * SAMPLE_RATE // 512  # ~250 frames for hop_length=512
     if mel_db.shape[1] < target_len:
         mel_db = np.pad(mel_db, ((0, 0), (0, target_len - mel_db.shape[1])))
     else:
@@ -471,10 +532,15 @@ def predict_emotion_audio(audio_path: Path, cnn_model, device: str) -> tuple[str
         logits = cnn_model(x)
     probs = F.softmax(logits, dim=-1)[0].cpu()
     idx = int(probs.argmax())
-    return EMOTION_CLASSES[idx], float(probs[idx]), _topk_predictions(probs, EMOTION_CLASSES)
+    return (
+        EMOTION_CLASSES[idx],
+        float(probs[idx]),
+        _topk_predictions(probs, EMOTION_CLASSES),
+    )
 
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
+
 
 def load_retriever(device: str) -> NabatiRetriever | None:
     """Load the saved FAISS retrieval index."""
@@ -488,6 +554,7 @@ def load_retriever(device: str) -> NabatiRetriever | None:
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
+
 def run_demo(
     audio_path: Path,
     top_k: int = 5,
@@ -500,15 +567,15 @@ def run_demo(
 
     # ── Poem metadata lookup (title, poet, ground-truth labels) ──────────
     meta = lookup_poem_metadata(audio_path)
-    poet_display  = meta["poet_en"]    if meta["poet_en"]    else ""
+    poet_display = meta["poet_en"] if meta["poet_en"] else ""
 
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Nabat-AI Demo  |  {audio_path.name}")
     if meta["poem_title"]:
         logger.info(f"Poem title     |  {meta['poem_title']}")
     if poet_display:
         logger.info(f"Poet           |  {poet_display}")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     t0 = time.perf_counter()
 
@@ -520,8 +587,7 @@ def run_demo(
     asr_model_name = WHISPER_MODEL
 
     if corrected_text:
-        logger.info("Step 1/6 — Corpus transcript override")
-        logger.info("  Using corrected corpus transcript and skipping Whisper load")
+        logger.info("Step 1/6 — Corpus transcript override (skipping Whisper)")
         analysis_text = corrected_text
         transcription = corpus_whisper_text or corrected_text
         asr_model_name = "corpus_corrected_text"
@@ -538,7 +604,9 @@ def run_demo(
     logger.info("Step 2/6 — Genre classification (AraPoemBERT)")
     tokenizer, genre_model = load_genre_model(device)
     if genre_model is not None:
-        genre, genre_conf, genre_topk = predict_genre(analysis_text, tokenizer, genre_model, device)
+        genre, genre_conf, genre_topk = predict_genre(
+            analysis_text, tokenizer, genre_model, device
+        )
         del genre_model
     else:
         genre, genre_conf, genre_topk = "unknown", 0.0, []
@@ -548,7 +616,9 @@ def run_demo(
     logger.info("Step 3/6 — Emotion (text) classification (AraPoemBERT)")
     emo_tok, emo_model = load_emotion_model(device)
     if emo_model is not None:
-        emo_text, emo_text_conf, emotion_clip_topk = predict_emotion_text(analysis_text, emo_tok, emo_model, device)
+        emo_text, emo_text_conf, emotion_clip_topk = predict_emotion_text(
+            analysis_text, emo_tok, emo_model, device
+        )
         del emo_model
     else:
         emo_text, emo_text_conf, emotion_clip_topk = None, None, []
@@ -559,7 +629,9 @@ def run_demo(
     logger.info("Step 4/6 — Delivery arousal (ArousalMLP, from scratch)")
     scaler, arousal_model = load_arousal_model(device)
     if arousal_model is not None:
-        arousal, arousal_conf = predict_arousal(audio_path, scaler, arousal_model, device)
+        arousal, arousal_conf = predict_arousal(
+            audio_path, scaler, arousal_model, device
+        )
         del arousal_model
     else:
         arousal, arousal_conf = None, None
@@ -571,14 +643,14 @@ def run_demo(
     if emo_text and arousal:
         text_implied_arousal = emotion_to_arousal(emo_text)
         if text_implied_arousal:
-            delivery_mismatch = (text_implied_arousal != arousal)
+            delivery_mismatch = text_implied_arousal != arousal
             if delivery_mismatch:
                 logger.info(
                     f"  Delivery mismatch: {emo_text} implies {text_implied_arousal} "
                     f"but audio is {arousal} — culturally significant performance choice"
                 )
 
-    # ── Step 5: Audio emotion CNN (auxiliary) ────────────────────────────
+    # ── Audio emotion CNN (auxiliary) ────────────────────────────────────
     # Emotion1DCNN provides a clip-level audio emotion prediction that is
     # gated into the poem-level emotion fusion pipeline as an auxiliary signal.
     # Arousal (above) is the primary from-scratch audio branch; this CNN
@@ -586,7 +658,9 @@ def run_demo(
     # when audio and text emotion signals disagree (high DMS clips).
     cnn = load_cnn(device)
     if cnn is not None:
-        emo_audio, emo_audio_conf, audio_clip_topk = predict_emotion_audio(audio_path, cnn, device)
+        emo_audio, emo_audio_conf, audio_clip_topk = predict_emotion_audio(
+            audio_path, cnn, device
+        )
         del cnn
     else:
         emo_audio, emo_audio_conf, audio_clip_topk = "unknown", 0.0, []
@@ -618,7 +692,13 @@ def run_demo(
 
     if full_poem:
         audio_poem_probs = full_poem.get("audio_emotion_poem_probs") or []
-        audio_poem_topk = _topk_predictions(np.array(audio_poem_probs, dtype=np.float64), EMOTION_TEXT_CLASSES) if audio_poem_probs else []
+        audio_poem_topk = (
+            _topk_predictions(
+                np.array(audio_poem_probs, dtype=np.float64), EMOTION_TEXT_CLASSES
+            )
+            if audio_poem_probs
+            else []
+        )
         emotion_poem_final = full_poem.get("emotion_poem_final")
         emotion_poem_final_reason = full_poem.get("emotion_poem_final_reason")
         arousal_poem = full_poem.get("poem_arousal")
@@ -631,7 +711,9 @@ def run_demo(
     else:
         audio_poem_topk = audio_clip_topk
         emotion_poem_final = poem_raw_top1 or emo_text
-        emotion_poem_final_reason = "Poem cache unavailable; falling back to clip-level emotion."
+        emotion_poem_final_reason = (
+            "Poem cache unavailable; falling back to clip-level emotion."
+        )
         arousal_poem = arousal
         arousal_poem_conf = arousal_conf
         dms_poem = delivery_mismatch
@@ -723,79 +805,114 @@ def _print_result(
 ) -> None:
     """Pretty-print InferenceResult to terminal."""
     sep = "─" * 62
-    print(f"\n{'═'*62}")
-    print("  NABAT-AI INFERENCE RESULT")
-    print(f"{'═'*62}")
-    print(f"  File    : {Path(r.audio_file).name}")
+    logger.info(f"\n{'═' * 62}")
+    logger.info("  NABAT-AI INFERENCE RESULT")
+    logger.info(f"{'═' * 62}")
+    logger.info(f"  File    : {Path(r.audio_file).name}")
     if r.poem_id:
-        print(f"  Poem ID : {r.poem_id}")
+        logger.info(f"  Poem ID : {r.poem_id}")
     if poem_title:
-        print(f"  Title   : {poem_title}")
+        logger.info(f"  Title   : {poem_title}")
     if poet_en:
-        print(f"  Poet    : {poet_en}")
-    print(f"  Latency : {r.inference_ms:.0f} ms")
-    print(sep)
-    print(f"  Transcription  : {r.transcription}")
-    print(sep)
-    print(f"  Genre          : {r.genre:<30} (conf={r.genre_confidence:.2%})")
+        logger.info(f"  Poet    : {poet_en}")
+    logger.info(f"  Latency : {r.inference_ms:.0f} ms")
+    logger.info(sep)
+    logger.info(f"  Transcription  : {r.transcription}")
+    logger.info(sep)
+    logger.info(f"  Genre          : {r.genre:<30} (conf={r.genre_confidence:.2%})")
     if r.manual_genre:
-        print(f"  Genre (manual) : {r.manual_genre}")
+        logger.info(f"  Genre (manual) : {r.manual_genre}")
     if r.emotion_text:
-        print(f"  Emotion (text) : {r.emotion_text:<30} (conf={r.emotion_text_confidence:.2%})")
+        logger.info(
+            f"  Emotion (text) : {r.emotion_text:<30} (conf={r.emotion_text_confidence:.2%})"
+        )
     else:
-        print("  Emotion (text) : not available — train with: just train-emotion")
+        logger.info("  Emotion (text) : not available — train with: just train-emotion")
     if r.emotion_poem_raw_top1:
-        print(f"  Poem raw emo   : {r.emotion_poem_raw_top1:<30} (conf={r.emotion_poem_raw_confidence or 0:.2%})")
+        logger.info(
+            f"  Poem raw emo   : {r.emotion_poem_raw_top1:<30} (conf={r.emotion_poem_raw_confidence or 0:.2%})"
+        )
     if r.emotion_poem_final:
-        print(f"  Poem final emo : {r.emotion_poem_final}")
+        logger.info(f"  Poem final emo : {r.emotion_poem_final}")
         if r.emotion_poem_final_reason:
-            print(f"  Decision note  : {r.emotion_poem_final_reason}")
+            logger.info(f"  Decision note  : {r.emotion_poem_final_reason}")
     if r.arousal:
-        print(f"  Delivery Arousal: {r.arousal:<29} (conf={r.arousal_confidence:.2%})")
+        logger.info(
+            f"  Delivery Arousal: {r.arousal:<29} (conf={r.arousal_confidence:.2%})"
+        )
         if r.delivery_mismatch is not None:
-            from data.arousal_labels import emotion_to_arousal as _e2a
-            text_ar = _e2a(r.emotion_text) if r.emotion_text else "?"
+            text_ar = emotion_to_arousal(r.emotion_text) if r.emotion_text else "?"
             flag = "MISMATCH" if r.delivery_mismatch else "aligned"
-            print(f"  Delivery Bias  : text→{text_ar:<8} audio={r.arousal:<8} [{flag}]")
+            logger.info(
+                f"  Delivery Bias  : text→{text_ar:<8} audio={r.arousal:<8} [{flag}]"
+            )
     if r.arousal_poem:
-        print(f"  Poem arousal   : {r.arousal_poem:<29} (conf={(r.arousal_poem_confidence or 0):.2%})")
+        logger.info(
+            f"  Poem arousal   : {r.arousal_poem:<29} (conf={(r.arousal_poem_confidence or 0):.2%})"
+        )
     if r.dms_poem is not None:
-        print(f"  DMS            : {'MISMATCH' if r.dms_poem else 'aligned'}")
+        logger.info(f"  DMS            : {'MISMATCH' if r.dms_poem else 'aligned'}")
     if r.delivery_nuance_tag:
-        print(f"  Delivery tag   : {r.delivery_nuance_tag}")
+        logger.info(f"  Delivery tag   : {r.delivery_nuance_tag}")
     if r.audio_emotion_poem_aux:
         used = "used" if r.audio_emotion_used_in_decision else "aux-only"
-        print(f"  Audio aux emo  : {r.audio_emotion_poem_aux:<30} [{used}]")
-    print(sep)
-    print(f"  Top-{len(r.similar_poems)} Similar Poems (poem-level):")
+        logger.info(f"  Audio aux emo  : {r.audio_emotion_poem_aux:<30} [{used}]")
+    logger.info(sep)
+    logger.info(f"  Top-{len(r.similar_poems)} Similar Poems (poem-level):")
     for i, p in enumerate(r.similar_poems, 1):
         n = getattr(p, "n_clips", "?")
-        print(f"    {i}. [{p.score:.3f}] {p.poet_en} — {p.source_poem}  ({n} clips)")
-        print(f"       Genre: {p.genre_en}  |  Tags: {p.imagery_tags_en}")
+        logger.info(
+            f"    {i}. [{p.score:.3f}] {p.poet_en} — {p.source_poem}  ({n} clips)"
+        )
+        logger.info(f"       Genre: {p.genre_en}  |  Tags: {p.imagery_tags_en}")
         # Show best line only if it looks like Arabic text; skip garbage transcriptions
         best = p.text_corrected[:80] if p.text_corrected else ""
         if best and _is_arabic(best):
-            print(f"       Sample: {best}{'…' if len(p.text_corrected) > 80 else ''}")
+            logger.info(
+                f"       Sample: {best}{'…' if len(p.text_corrected) > 80 else ''}"
+            )
         elif best:
-            print("       Sample: [Arabic text]")
-    print(f"{'═'*62}\n")
+            logger.info("       Sample: [Arabic text]")
+    logger.info(f"{'═' * 62}\n")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Nabat-AI end-to-end demo: audio → transcription + genre + emotion + similar poems"
     )
     p.add_argument("audio", type=Path, help="Path to input .mp3 audio file")
-    p.add_argument("--top-k", type=int, default=5, help="Number of similar poems to retrieve (default: 5)")
-    p.add_argument("--imagery-filter", type=str, default=None,
-                   help="Only retrieve poems whose imagery tags contain this word (e.g. 'heart')")
-    p.add_argument("--out", type=Path, default=PROJECT_ROOT / "outputs/demo_result.json",
-                   help="Path to save InferenceResult JSON (default: outputs/demo_result.json)")
-    p.add_argument("--device", type=str, default="cpu",
-                   help="Compute device: cpu | cuda | mps (default: cpu)")
-    p.add_argument("--use-lora", action="store_true", help="Use LoRA Whisper adapter instead of the baseline model")
+    p.add_argument(
+        "--top-k",
+        type=int,
+        default=5,
+        help="Number of similar poems to retrieve (default: 5)",
+    )
+    p.add_argument(
+        "--imagery-filter",
+        type=str,
+        default=None,
+        help="Only retrieve poems whose imagery tags contain this word (e.g. 'heart')",
+    )
+    p.add_argument(
+        "--out",
+        type=Path,
+        default=PROJECT_ROOT / "outputs/demo_result.json",
+        help="Path to save InferenceResult JSON (default: outputs/demo_result.json)",
+    )
+    p.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Compute device: cpu | cuda | mps (default: cpu)",
+    )
+    p.add_argument(
+        "--use-lora",
+        action="store_true",
+        help="Use LoRA Whisper adapter instead of the baseline model",
+    )
     return p.parse_args()
 
 

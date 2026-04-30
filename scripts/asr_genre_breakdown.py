@@ -39,10 +39,12 @@ def load_rows(split: str = "test") -> list[dict]:
     return rows
 
 
-def genre_note(genre: str, wer: float, cer: float) -> str:
+def genre_note(genre: str) -> str:
     short = genre.split("(")[0].strip()
     if short in {"Ghazal", "Badawa"}:
-        return "Dialect-heavy lexicon and colloquial morphology raise character variation."
+        return (
+            "Dialect-heavy lexicon and colloquial morphology raise character variation."
+        )
     if short in {"Hikma", "Madih", "Fakhr"}:
         return "More formulaic or formal vocabulary makes transcription easier."
     if short == "Hija":
@@ -68,7 +70,7 @@ def summarise(rows: list[dict]) -> dict:
                 "WER": round(float(np.mean(wers)), 4),
                 "CER": round(float(np.mean(cers)), 4),
                 "Soft-CER": round(float(np.mean(softs)), 4),
-                "notes": genre_note(genre, float(np.mean(wers)), float(np.mean(cers))),
+                "notes": genre_note(genre),
             }
         )
     return {"per_genre": summaries}
@@ -98,7 +100,9 @@ def main() -> None:
     summary = summarise(rows)
 
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_JSON.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    REPORT_JSON.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     REPORT_MD.write_text(render_markdown(summary), encoding="utf-8")
 
     logger.success(f"ASR genre breakdown → {REPORT_MD}")

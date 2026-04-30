@@ -98,7 +98,9 @@ def aggregate_logits_mean(logits_by_clip: list[np.ndarray]) -> np.ndarray:
     """Average logits across clips and apply softmax once at poem level."""
     if not logits_by_clip:
         raise ValueError("aggregate_logits_mean requires at least one clip.")
-    logits = np.vstack([np.asarray(z, dtype=np.float64) for z in logits_by_clip]).mean(axis=0)
+    logits = np.vstack([np.asarray(z, dtype=np.float64) for z in logits_by_clip]).mean(
+        axis=0
+    )
     logits = logits - logits.max()
     exp_logits = np.exp(logits)
     return _normalise(exp_logits)
@@ -157,11 +159,17 @@ def build_poem_emotion_summary(
     entropy = _safe_entropy(probs)
     top1 = topk[0]
     top2_prob = topk[1].prob if len(topk) > 1 else 0.0
-    avg_clip_conf = float(np.mean(clip_conf)) if clip_conf else float(np.mean([p.max() for p in probs_by_clip]))
+    avg_clip_conf = (
+        float(np.mean(clip_conf))
+        if clip_conf
+        else float(np.mean([p.max() for p in probs_by_clip]))
+    )
     return {
         "poem_id": poem_id,
         "aggregation_method": method,
-        "poem_probabilities": {label: round(float(prob), 6) for label, prob in zip(labels, probs)},
+        "poem_probabilities": {
+            label: round(float(prob), 6) for label, prob in zip(labels, probs)
+        },
         "poem_emotion_raw_topk": [item.to_dict() for item in topk],
         "poem_emotion_raw_top1": top1.label,
         "poem_emotion_raw_confidence": round(top1.prob, 6),
@@ -171,5 +179,7 @@ def build_poem_emotion_summary(
             "top1_top2_margin": round(top1.prob - top2_prob, 6),
             "avg_clip_confidence": round(avg_clip_conf, 6),
         },
-        "clip_support": clip_support_summary(probs_by_clip, labels, [item.label for item in topk]),
+        "clip_support": clip_support_summary(
+            probs_by_clip, labels, [item.label for item in topk]
+        ),
     }

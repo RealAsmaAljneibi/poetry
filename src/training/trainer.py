@@ -6,28 +6,31 @@ Shared training loop utilities used by every training script.
 Provides:
   - TensorBoardLogger  — thin wrapper around SummaryWriter with auto-named run dir
   - EarlyStopper       — stops training when val Macro-F1 stops improving
-  - get_optimizer      — AdamW with discriminative per-layer LRs (Week 4)
-  - get_scheduler      — linear warmup + cosine decay (Week 2)
+  - get_optimizer      — AdamW with discriminative per-layer LRs
+  - get_scheduler      — linear warmup + cosine decay
   - set_seed           — deterministic reproducibility
 
 All training scripts do:
     from src.training.trainer import TensorBoardLogger, EarlyStopper, get_optimizer, get_scheduler
 """
 
+import io
 import math
 import random
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
-import torch
 from loguru import logger
+import numpy as np
+from PIL import Image
+import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR, OneCycleLR
 from torch.utils.tensorboard import SummaryWriter
 
 
 # ── Seed ────────────────────────────────────────────────────────────────────
+
 
 def set_seed(seed: int) -> None:
     """Fully deterministic run across Python / NumPy / PyTorch."""
@@ -42,6 +45,7 @@ def set_seed(seed: int) -> None:
 
 # ── TensorBoard Logger ───────────────────────────────────────────────────────
 
+
 class TensorBoardLogger:
     """
     Wraps SummaryWriter with auto-named run directory and helper methods.
@@ -52,30 +56,30 @@ class TensorBoardLogger:
 
     def __init__(self, tensorboard_dir: Path, model_tag: str, task: str):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        run_name  = f"{model_tag}_{task}_{timestamp}"
-        log_dir   = tensorboard_dir / run_name
+        run_name = f"{model_tag}_{task}_{timestamp}"
+        log_dir = tensorboard_dir / run_name
         log_dir.mkdir(parents=True, exist_ok=True)
 
-        self.writer   = SummaryWriter(log_dir=str(log_dir))
+        self.writer = SummaryWriter(log_dir=str(log_dir))
         self.run_name = run_name
-        self.log_dir  = log_dir
+        self.log_dir = log_dir
         logger.info(f"TensorBoard run: {log_dir}")
         logger.info(f"  → Launch with: tensorboard --logdir {tensorboard_dir}")
 
     # ── Per-step scalars ─────────────────────────────────────────────────────
     def log_step(self, loss: float, lr: float, global_step: int) -> None:
         self.writer.add_scalar("Step/train_loss", loss, global_step)
-        self.writer.add_scalar("Step/lr",         lr,   global_step)
+        self.writer.add_scalar("Step/lr", lr, global_step)
 
     # ── Per-epoch scalars ────────────────────────────────────────────────────
     def log_epoch(
         self,
-        epoch:      int,
+        epoch: int,
         train_loss: float,
-        train_acc:  float,
-        val_loss:   float,
-        val_f1:     float,
-        val_acc:    float,
+        train_acc: float,
+        val_loss: float,
+        val_f1: float,
+        val_acc: float,
     ) -> None:
         self.writer.add_scalars(
             "Epoch/loss",
@@ -87,12 +91,16 @@ class TensorBoardLogger:
             {"train": train_acc, "val": val_acc},
             epoch,
         )
-        self.writer.add_scalar("Epoch/val_macro_f1",  val_f1,  epoch)
-        self.writer.add_scalar("Epoch/val_accuracy",  val_acc, epoch)
+        self.writer.add_scalar("Epoch/val_macro_f1", val_f1, epoch)
+        self.writer.add_scalar("Epoch/val_accuracy", val_acc, epoch)
         epoch_log = logger.bind(epoch=epoch, split="val")
         epoch_log.info(
             "loss={:.4f} acc={:.4f} | val_loss={:.4f} val_f1={:.4f} val_acc={:.4f}",
-            train_loss, train_acc, val_loss, val_f1, val_acc,
+            train_loss,
+            train_acc,
+            val_loss,
+            val_f1,
+            val_acc,
         )
 
     # ── Confusion matrix as image ────────────────────────────────────────────
@@ -101,10 +109,6 @@ class TensorBoardLogger:
         Log a matplotlib confusion-matrix figure.
         fig: matplotlib.figure.Figure returned by plot_confusion_matrix()
         """
-        import io
-        import numpy as np
-        from PIL import Image
-
         buf = io.BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight")
         buf.seek(0)
@@ -117,11 +121,7 @@ class TensorBoardLogger:
 
     # ── Weight + gradient histograms (log per epoch) ─────────────────────────
     def log_histograms(self, model: torch.nn.Module, epoch: int) -> None:
-        """
-        Log per-layer weight and gradient distributions to TensorBoard.
-        From debugging lab: "Weight histograms should evolve over training, not stay static.
-        Gradient histograms should not be all zeros (dead) or huge values (exploding)."
-        """
+        """Log per-layer weight and gradient distributions to TensorBoard."""
         for name, param in model.named_parameters():
             if param.data is not None:
                 self.writer.add_histogram(f"weights/{name}", param.data, epoch)
@@ -137,9 +137,13 @@ class TensorBoardLogger:
         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), float("inf"))
         self.writer.add_scalar("Grad/total_norm", total_norm, global_step)
         if total_norm < 1e-6:
-            logger.warning(f"  Vanishing gradients! norm={total_norm:.2e} at step {global_step}")
+            logger.warning(
+                f"  Vanishing gradients! norm={total_norm:.2e} at step {global_step}"
+            )
         if total_norm > 100:
-            logger.warning(f"  Exploding gradients! norm={total_norm:.2e} at step {global_step}")
+            logger.warning(
+                f"  Exploding gradients! norm={total_norm:.2e} at step {global_step}"
+            )
         return float(total_norm)
 
     def close(self) -> None:
@@ -148,6 +152,7 @@ class TensorBoardLogger:
 
 # ── Early Stopping ───────────────────────────────────────────────────────────
 
+
 class EarlyStopper:
     """
     Stops training when val Macro-F1 hasn't improved for `patience` epochs.
@@ -155,10 +160,10 @@ class EarlyStopper:
     """
 
     def __init__(self, patience: int, output_dir: Path, model_tag: str):
-        self.patience    = patience
-        self.best_f1     = -1.0
-        self.bad_epochs  = 0
-        self.best_ckpt   = output_dir / f"{model_tag}_best.pt"
+        self.patience = patience
+        self.best_f1 = -1.0
+        self.bad_epochs = 0
+        self.best_ckpt = output_dir / f"{model_tag}_best.pt"
         output_dir.mkdir(parents=True, exist_ok=True)
 
     def step(self, val_f1: float, model: torch.nn.Module) -> bool:
@@ -167,21 +172,26 @@ class EarlyStopper:
         Saves model weights whenever val_f1 improves.
         """
         if val_f1 > self.best_f1:
-            self.best_f1    = val_f1
+            self.best_f1 = val_f1
             self.bad_epochs = 0
             torch.save(model.state_dict(), self.best_ckpt)
-            logger.success(f"  ✓ New best Macro-F1={val_f1:.4f} → saved {self.best_ckpt.name}")
+            logger.success(
+                f"  ✓ New best Macro-F1={val_f1:.4f} → saved {self.best_ckpt.name}"
+            )
             return False
         else:
             self.bad_epochs += 1
             logger.info(f"  No improvement ({self.bad_epochs}/{self.patience})")
             if self.bad_epochs >= self.patience:
-                logger.warning(f"Early stopping triggered after {self.patience} epochs without improvement.")
+                logger.warning(
+                    f"Early stopping triggered after {self.patience} epochs without improvement."
+                )
                 return True
             return False
 
 
-# ── Discriminative LR Optimizer (Week 4) ────────────────────────────────────
+# ── Discriminative LR Optimizer ─────────────────────────────────────────────
+
 
 def get_optimizer(
     model: torch.nn.Module,
@@ -190,7 +200,7 @@ def get_optimizer(
     discriminative_lr_decay: float = 1.0,
 ) -> AdamW:
     """
-    AdamW with optional discriminative per-layer LRs (Week 4 lecture).
+    AdamW with optional discriminative per-layer LRs.
 
     When discriminative_lr_decay < 1.0:
       - Top transformer layer gets `base_lr`
@@ -207,10 +217,22 @@ def get_optimizer(
         no_decay = ["bias", "LayerNorm.weight"]
         return AdamW(
             [
-                {"params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_decay)],
-                 "weight_decay": weight_decay},
-                {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)],
-                 "weight_decay": 0.0},
+                {
+                    "params": [
+                        p
+                        for n, p in model.named_parameters()
+                        if not any(nd in n for nd in no_decay)
+                    ],
+                    "weight_decay": weight_decay,
+                },
+                {
+                    "params": [
+                        p
+                        for n, p in model.named_parameters()
+                        if any(nd in n for nd in no_decay)
+                    ],
+                    "weight_decay": 0.0,
+                },
             ],
             lr=base_lr,
         )
@@ -239,17 +261,19 @@ def get_optimizer(
         return 999  # pooler / classifier head → highest LR
 
     sorted_keys = sorted(layer_groups.keys(), key=sort_key)
-    n_layers    = len(sorted_keys)
+    n_layers = len(sorted_keys)
 
     param_groups = []
     for rank, key in enumerate(sorted_keys):
         # rank=0 → embeddings (lowest LR); rank=n_layers-1 → classifier (base_lr)
         layer_lr = base_lr * (discriminative_lr_decay ** (n_layers - 1 - rank))
-        param_groups.append({
-            "params": layer_groups[key],
-            "lr":     layer_lr,
-            "weight_decay": 0.0 if key == "embeddings" else weight_decay,
-        })
+        param_groups.append(
+            {
+                "params": layer_groups[key],
+                "lr": layer_lr,
+                "weight_decay": 0.0 if key == "embeddings" else weight_decay,
+            }
+        )
         logger.debug(f"  Layer '{key}': lr={layer_lr:.2e}")
 
     logger.info(
@@ -259,16 +283,17 @@ def get_optimizer(
     return AdamW(param_groups)
 
 
-# ── LR Scheduler: Linear Warmup + Cosine Decay (Week 2) ─────────────────────
+# ── LR Scheduler: Linear Warmup + Cosine Decay ───────────────────────────────
+
 
 def get_scheduler(
-    optimizer:    AdamW,
-    total_steps:  int,
+    optimizer: AdamW,
+    total_steps: int,
     warmup_ratio: float,
 ) -> LambdaLR:
     """
     Linear warmup for `warmup_ratio * total_steps` steps,
-    then cosine decay to 0 (Week 2 lecture: 'cosine annealing with warmup').
+    then cosine decay to 0.
 
     Visualised in TensorBoard via Step/lr scalar.
     """
@@ -279,26 +304,26 @@ def get_scheduler(
             # Linear warmup: 0 → 1
             return float(current_step) / float(max(1, warmup_steps))
         # Cosine decay: 1 → 0
-        progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        progress = float(current_step - warmup_steps) / float(
+            max(1, total_steps - warmup_steps)
+        )
         return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
 
     return LambdaLR(optimizer, lr_lambda)
 
 
-# ── LR Scheduler: OneCycleLR (Week 4 lab preference for limited data) ────────
+# ── LR Scheduler: OneCycleLR ─────────────────────────────────────────────────
+
 
 def get_one_cycle_scheduler(
-    optimizer:    AdamW,
-    max_lr:       float,
-    total_steps:  int,
-    pct_start:    float = 0.1,
+    optimizer: AdamW,
+    max_lr: float,
+    total_steps: int,
+    pct_start: float = 0.1,
 ) -> OneCycleLR:
     """
     OneCycleLR: LR increases from max_lr/25 → max_lr (warmup phase over
     pct_start fraction of training), then decays to max_lr/1e4 via cosine.
-
-    Week 4 lab finding: "OneCycleLR preferred for small datasets —
-    the aggressive warmup + single-pass decay avoids LR staying too low."
 
     pct_start=0.1 matches warmup_ratio=0.1 convention in the rest of the codebase.
 
@@ -311,14 +336,17 @@ def get_one_cycle_scheduler(
         total_steps=total_steps,
         pct_start=pct_start,
         anneal_strategy="cos",
-        div_factor=25.0,       # initial LR = max_lr / 25
+        div_factor=25.0,  # initial LR = max_lr / 25
         final_div_factor=1e4,  # final LR = max_lr / (25 * 1e4) ≈ 0
     )
 
 
-# ── Gradual Unfreezing (Week 4) ──────────────────────────────────────────────
+# ── Gradual Unfreezing ───────────────────────────────────────────────────────
 
-def unfreeze_next_layer_group(model: torch.nn.Module, epoch: int, unfreeze_every: int) -> None:
+
+def unfreeze_next_layer_group(
+    model: torch.nn.Module, epoch: int, unfreeze_every: int
+) -> None:
     """
     At the start of each epoch, unfreeze one additional transformer layer group
     (counting from the top down). Called in the training loop as:
@@ -336,14 +364,16 @@ def unfreeze_next_layer_group(model: torch.nn.Module, epoch: int, unfreeze_every
         parts = name.split(".")
         for i, p in enumerate(parts):
             if p == "layer" and i + 1 < len(parts) and parts[i + 1].isdigit():
-                key = f"encoder.layer.{parts[i+1]}"
+                key = f"encoder.layer.{parts[i + 1]}"
                 if key not in layer_names:
                     layer_names.append(key)
                 break
 
     # Highest-indexed layer unfreezes first (top-down)
     layer_names_desc = list(reversed(layer_names))
-    groups_to_unfreeze = (epoch // unfreeze_every) + 1  # +1 so epoch 0 unfreezes top layer
+    groups_to_unfreeze = (
+        epoch // unfreeze_every
+    ) + 1  # +1 so epoch 0 unfreezes top layer
 
     for i, layer_prefix in enumerate(layer_names_desc):
         frozen = i >= groups_to_unfreeze
@@ -352,4 +382,6 @@ def unfreeze_next_layer_group(model: torch.nn.Module, epoch: int, unfreeze_every
                 param.requires_grad = not frozen
 
     unfrozen = min(groups_to_unfreeze, len(layer_names_desc))
-    logger.info(f"  Gradual unfreeze: {unfrozen}/{len(layer_names_desc)} layer groups active at epoch {epoch}")
+    logger.info(
+        f"  Gradual unfreeze: {unfrozen}/{len(layer_names_desc)} layer groups active at epoch {epoch}"
+    )

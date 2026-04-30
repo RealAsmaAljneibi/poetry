@@ -1,7 +1,7 @@
 # Config Presets
 
-This directory satisfies the rubric expectation that the project includes a dedicated `configs/`
-area, while keeping the existing validated Pydantic configuration system in `src/config.py`.
+This directory holds versioned preset snapshots for each model, complementing the validated
+Pydantic configuration system in `src/config.py`.
 
 How this repo uses configuration:
 

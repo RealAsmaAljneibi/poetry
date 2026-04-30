@@ -8,10 +8,10 @@ from pathlib import Path
 import numpy as np
 import torch
 from loguru import logger
-from sklearn.feature_extraction.text import TfidfVectorizer
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from _analysis_utils import batch_infer, load_arapoem_model, tfidf_top_terms, top_confusion_pairs
 
 from src.data.labels import (
     apply_emotion_merge,
@@ -21,15 +21,20 @@ from src.data.labels import (
 from src.evaluation.metrics import emotion_distance
 
 PROJECT_ROOT = Path(__file__).parent.parent
-ARAPOEM_MODEL = "faisalq/bert-base-arapoembert"
-CHECKPOINT = PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+CHECKPOINT = (
+    PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+)
 REPORT_MD = PROJECT_ROOT / "outputs/reports/emotion_error_analysis.md"
 REPORT_JSON = PROJECT_ROOT / "outputs/reports/emotion_error_analysis.json"
 MAX_SEQ_LEN = 32
 MERGE_PROFILE = "rare_merge_v1"
 CLASS_NAMES = get_merged_emotion_classes(MERGE_PROFILE)
 ID2LABEL = {idx: label for idx, label in enumerate(CLASS_NAMES)}
-DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = (
+    "mps"
+    if torch.backends.mps.is_available()
+    else ("cuda" if torch.cuda.is_available() else "cpu")
+)
 
 
 def canonicalize_label(label: str) -> str:
@@ -56,7 +61,9 @@ def load_records(jsonl_path: Path) -> list[dict]:
         merged_label = canonicalize_label(
             apply_emotion_merge(rec.get("emotion_text", ""), MERGE_PROFILE)
         )
-        label_id = encode_emotion_with_profile(rec.get("emotion_text", ""), MERGE_PROFILE)
+        label_id = encode_emotion_with_profile(
+            rec.get("emotion_text", ""), MERGE_PROFILE
+        )
         if label_id == -1:
             continue
         rows.append(
@@ -75,69 +82,38 @@ def load_records(jsonl_path: Path) -> list[dict]:
 
 
 def predict(records: list[dict]) -> list[dict]:
-    tokenizer = AutoTokenizer.from_pretrained(ARAPOEM_MODEL, local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        ARAPOEM_MODEL,
-        num_labels=len(CLASS_NAMES),
-        ignore_mismatched_sizes=True,
-        local_files_only=True,
+    tokenizer, model = load_arapoem_model(CHECKPOINT, len(CLASS_NAMES), DEVICE)
+    probs_matrix = batch_infer(
+        model, tokenizer, [row["clip_text"] for row in records], DEVICE, MAX_SEQ_LEN
     )
-    state = torch.load(CHECKPOINT, map_location="cpu", weights_only=False)
-    model.load_state_dict(state, strict=False)
-    model = model.to(DEVICE).eval()
-
-    batch_size = 16
     enriched: list[dict] = []
-    for start in range(0, len(records), batch_size):
-        batch = records[start : start + batch_size]
-        enc = tokenizer(
-            [row["clip_text"] for row in batch],
-            max_length=MAX_SEQ_LEN,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
+    for row, prob in zip(records, probs_matrix, strict=True):
+        order = np.argsort(prob)[::-1]
+        pred_id = int(order[0])
+        runner_up_id = int(order[1]) if len(order) > 1 else pred_id
+        enriched.append(
+            {
+                **row,
+                "pred_id": pred_id,
+                "pred_label": ID2LABEL[pred_id],
+                "confidence": float(prob[pred_id]),
+                "runner_up_label": ID2LABEL[runner_up_id],
+                "margin": float(prob[pred_id] - prob[runner_up_id]),
+            }
         )
-        with torch.no_grad():
-            logits = model(
-                input_ids=enc["input_ids"].to(DEVICE),
-                attention_mask=enc["attention_mask"].to(DEVICE),
-            ).logits
-        probs = torch.softmax(logits, dim=-1).cpu().numpy()
-        for row, prob in zip(batch, probs, strict=True):
-            order = np.argsort(prob)[::-1]
-            pred_id = int(order[0])
-            pred_label = ID2LABEL[pred_id]
-            runner_up_id = int(order[1]) if len(order) > 1 else pred_id
-            enriched.append(
-                {
-                    **row,
-                    "pred_id": pred_id,
-                    "pred_label": pred_label,
-                    "confidence": float(prob[pred_id]),
-                    "runner_up_label": ID2LABEL[runner_up_id],
-                    "margin": float(prob[pred_id] - prob[runner_up_id]),
-                }
-            )
     return enriched
 
 
-def compute_distinctive_words(train_rows: list[dict], top_k: int = 10) -> dict[str, list[str]]:
+def compute_distinctive_words(
+    train_rows: list[dict], top_k: int = 10
+) -> dict[str, list[str]]:
     grouped: dict[str, list[str]] = defaultdict(list)
     for row in train_rows:
         grouped[row["true_label"]].append(row["clip_text"])
-
-    labels = [label for label in CLASS_NAMES if label in grouped]
-    docs = [" ".join(grouped[label]) for label in labels]
-    vectorizer = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b", lowercase=False, max_features=5000)
-    matrix = vectorizer.fit_transform(docs)
-    vocab = np.array(vectorizer.get_feature_names_out())
-
-    top_terms: dict[str, list[str]] = {}
-    for idx, label in enumerate(labels):
-        row = matrix[idx].toarray().ravel()
-        order = row.argsort()[::-1]
-        top_terms[label] = [vocab[i] for i in order if row[i] > 0][:top_k]
-    return top_terms
+    label_docs = {
+        label: " ".join(grouped[label]) for label in CLASS_NAMES if label in grouped
+    }
+    return tfidf_top_terms(label_docs, CLASS_NAMES, top_k)
 
 
 def count_lexicon_hits(text: str, lexicon: list[str]) -> int:
@@ -149,23 +125,16 @@ def categorize_error(row: dict, distinctive: dict[str, list[str]]) -> str:
     if emotion_distance(row["true_label"], row["pred_label"]) <= 1:
         return "culturally_adjacent"
 
-    pred_hits = count_lexicon_hits(row["clip_text"], distinctive.get(row["pred_label"], []))
-    true_hits = count_lexicon_hits(row["clip_text"], distinctive.get(row["true_label"], []))
+    pred_hits = count_lexicon_hits(
+        row["clip_text"], distinctive.get(row["pred_label"], [])
+    )
+    true_hits = count_lexicon_hits(
+        row["clip_text"], distinctive.get(row["true_label"], [])
+    )
     if row["confidence"] >= 0.50 and pred_hits >= 1 and true_hits == 0:
         return "label_noise"
 
-    if row["margin"] <= 0.12 or len(row["clip_text"].split()) <= 5:
-        return "genuine_ambiguity"
-
     return "genuine_ambiguity"
-
-
-def top_confusion_pairs(rows: list[dict], top_k: int = 5) -> list[tuple[tuple[str, str], int]]:
-    counts: Counter[tuple[str, str]] = Counter()
-    for row in rows:
-        if row["true_label"] != row["pred_label"]:
-            counts[(row["true_label"], row["pred_label"])] += 1
-    return counts.most_common(top_k)
 
 
 def build_summary(rows: list[dict], distinctive: dict[str, list[str]]) -> dict:
@@ -277,7 +246,9 @@ def main() -> None:
     summary = build_summary(predicted, distinctive)
 
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_JSON.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    REPORT_JSON.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     REPORT_MD.write_text(render_markdown(summary), encoding="utf-8")
 
     logger.success(f"Emotion error analysis → {REPORT_MD}")

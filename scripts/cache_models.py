@@ -16,7 +16,14 @@ ARAPOEM_MODEL_DIR = LOCAL_MODEL_DIR / "arapoembert"
 
 
 def _weights_present(target_dir: Path) -> bool:
-    return any((target_dir / name).exists() for name in ("model.safetensors", "pytorch_model.bin", "model.safetensors.index.json"))
+    return any(
+        (target_dir / name).exists()
+        for name in (
+            "model.safetensors",
+            "pytorch_model.bin",
+            "model.safetensors.index.json",
+        )
+    )
 
 
 def ensure_local_snapshot(repo_id: str, target_dir: Path) -> None:
@@ -35,7 +42,9 @@ def ensure_local_snapshot(repo_id: str, target_dir: Path) -> None:
 def verify_snapshot(target_dir: Path, required_files: list[str]) -> None:
     missing = [name for name in required_files if not (target_dir / name).exists()]
     if missing or not _weights_present(target_dir):
-        raise RuntimeError(f"Incomplete offline model bundle at {target_dir}. Missing: {missing or ['weights']}")
+        raise RuntimeError(
+            f"Incomplete offline model bundle at {target_dir}. Missing: {missing or ['weights']}"
+        )
 
 
 def main() -> None:
@@ -43,7 +52,10 @@ def main() -> None:
 
     logger.info("Caching Whisper repository into repo-local bundle")
     ensure_local_snapshot(WHISPER_MODEL, WHISPER_MODEL_DIR)
-    verify_snapshot(WHISPER_MODEL_DIR, ["config.json", "preprocessor_config.json", "tokenizer_config.json"])
+    verify_snapshot(
+        WHISPER_MODEL_DIR,
+        ["config.json", "preprocessor_config.json", "tokenizer_config.json"],
+    )
 
     logger.info("Caching AraPoemBERT repository into repo-local bundle")
     ensure_local_snapshot(ARAPOEM_MODEL, ARAPOEM_MODEL_DIR)

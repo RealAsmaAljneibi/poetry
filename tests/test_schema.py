@@ -1,5 +1,7 @@
 """tests/test_schema.py — Pydantic schema validation tests."""
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -15,7 +17,7 @@ from src.evaluation.metrics import soft_cer, standard_wer, emotion_distance
 
 def test_poetry_sample_valid():
     sample = PoetrySample(
-        audio_filename="/tmp/poem0001_em_bayt_0001.mp3",
+        audio_filename=Path("/tmp/poem0001_em_bayt_0001.mp3"),
         source_poem="poem0001_em",
         start=0,
         end=5000,

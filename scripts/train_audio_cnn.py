@@ -3,14 +3,7 @@ scripts/train_audio_cnn.py
 
 Trains Emotion1DCNN from scratch on mel-spectrograms for audio emotion classification.
 
-Course techniques applied:
-  Week 2 — LR warmup + cosine decay
-  Week 3 — Focal loss + class weights, early stopping
-  Week 4 — SpecAugment (time + frequency masking), gradient accumulation
-  Week 5 — TensorBoard, Pydantic config, sanity checks, gradient histograms
-
-SpecAugment reference: Park et al. 2019 — standard augmentation for audio CNNs,
-covered in the limited-data lab (augmentation notebook).
+SpecAugment reference: Park et al. 2019 — standard augmentation for audio CNNs.
 
 Usage:
     uv run python scripts/train_audio_cnn.py
@@ -22,12 +15,12 @@ import sys
 from pathlib import Path
 
 import librosa
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import matplotlib.pyplot as plt
-import seaborn as sns
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, classification_report, confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
@@ -38,18 +31,22 @@ from src.config import audio_cnn_config
 from src.data.labels import EMOTION_CLASSES, encode_emotion
 from src.models.audio_cnn import Emotion1DCNN
 from src.training.trainer import (
-    TensorBoardLogger, EarlyStopper,
-    get_scheduler, get_one_cycle_scheduler, set_seed,
+    TensorBoardLogger,
+    EarlyStopper,
+    get_scheduler,
+    get_one_cycle_scheduler,
+    set_seed,
 )
 from src.training.sanity import run_all_checks
 
 
 # ── Focal Loss ────────────────────────────────────────────────────────────────
 
+
 class FocalLoss(nn.Module):
     def __init__(self, gamma: float = 2.0, weight: torch.Tensor | None = None):
         super().__init__()
-        self.gamma  = gamma
+        self.gamma = gamma
         self.weight = weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -59,6 +56,7 @@ class FocalLoss(nn.Module):
 
 
 # ── SpecAugment ───────────────────────────────────────────────────────────────
+
 
 def spec_augment(
     mel: torch.Tensor,
@@ -96,6 +94,7 @@ def spec_augment(
 
 # ── Audio Dataset ─────────────────────────────────────────────────────────────
 
+
 class AudioEmotionDataset(Dataset):
     """
     Loads audio clips and returns mel-spectrograms + emotion_audio label.
@@ -113,11 +112,11 @@ class AudioEmotionDataset(Dataset):
         is_train: bool = False,
         noise_amplitude: float = 0.005,
     ):
-        self.sr            = sample_rate
-        self.max_len       = max_audio_sec * sample_rate
-        self.n_mels        = n_mels
-        self.is_train      = is_train
-        self.noise_amp     = noise_amplitude
+        self.sr = sample_rate
+        self.max_len = max_audio_sec * sample_rate
+        self.n_mels = n_mels
+        self.is_train = is_train
+        self.noise_amp = noise_amplitude
         self.samples: list[dict] = []
 
         skipped_no_label = 0
@@ -155,13 +154,11 @@ class AudioEmotionDataset(Dataset):
             logger.warning(f"Failed to load {path}: {e} — using silence")
             wav = np.zeros(self.max_len, dtype=np.float32)
 
-        # Pad / trim
         if len(wav) >= self.max_len:
             wav = wav[: self.max_len]
         else:
             wav = np.pad(wav, (0, self.max_len - len(wav)))
 
-        # Gaussian noise augmentation
         if self.is_train and self.noise_amp > 0:
             amp = self.noise_amp * np.random.uniform() * max(np.amax(np.abs(wav)), 1e-6)
             wav = wav + amp * np.random.normal(size=wav.shape).astype(np.float32)
@@ -171,39 +168,48 @@ class AudioEmotionDataset(Dataset):
         return torch.tensor(mel_db)  # (n_mels, T)
 
     def __getitem__(self, idx: int) -> dict:
-        s   = self.samples[idx]
+        s = self.samples[idx]
         mel = self._load_mel(s["path"])
 
-        # SpecAugment — training only (Week 4 augmentation lab)
         if self.is_train:
             mel = spec_augment(mel)
 
         return {
-            "mel":   mel,
+            "mel": mel,
             "label": torch.tensor(s["label"], dtype=torch.long),
         }
 
 
 # ── Collate (variable time length → pad to batch max) ────────────────────────
 
+
 def collate_fn(batch: list[dict]) -> dict:
     """Pad mel spectrograms to the longest in the batch along the time axis."""
     max_T = max(b["mel"].shape[-1] for b in batch)
-    mels  = torch.stack([
-        F.pad(b["mel"], (0, max_T - b["mel"].shape[-1]))
-        for b in batch
-    ])
+    mels = torch.stack(
+        [F.pad(b["mel"], (0, max_T - b["mel"].shape[-1])) for b in batch]
+    )
     labels = torch.stack([b["label"] for b in batch])
     return {"mel": mels, "label": labels}
 
 
 # ── Confusion matrix ──────────────────────────────────────────────────────────
 
+
 def make_confusion_figure(y_true, y_pred, class_names, title) -> plt.Figure:
-    cm  = confusion_matrix(y_true, y_pred, labels=list(range(len(class_names))))
-    fig, ax = plt.subplots(figsize=(max(8, len(class_names)), max(6, len(class_names) - 2)))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names, ax=ax)
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(len(class_names))))
+    fig, ax = plt.subplots(
+        figsize=(max(8, len(class_names)), max(6, len(class_names) - 2))
+    )
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=class_names,
+        yticklabels=class_names,
+        ax=ax,
+    )
     ax.set_xlabel("Predicted")
     ax.set_ylabel("True")
     ax.set_title(title)
@@ -215,24 +221,33 @@ def make_confusion_figure(y_true, y_pred, class_names, title) -> plt.Figure:
 
 # ── Train / eval loops ────────────────────────────────────────────────────────
 
+
 def train_epoch(
-    model, loader, optimizer, scheduler, criterion, device,
-    tb_logger, global_step, log_every, accum_steps=1,
+    model,
+    loader,
+    optimizer,
+    scheduler,
+    criterion,
+    device,
+    tb_logger,
+    global_step,
+    log_every,
+    accum_steps=1,
 ) -> tuple[float, int]:
     model.train()
     total_loss, n_batches = 0.0, 0
     optimizer.zero_grad()
 
     for i, batch in enumerate(loader):
-        mel    = batch["mel"].to(device)
+        mel = batch["mel"].to(device)
         labels = batch["label"].to(device)
 
         loss = criterion(model(mel), labels) / accum_steps
         loss.backward()
         total_loss += loss.item() * accum_steps
-        n_batches  += 1
+        n_batches += 1
 
-        is_last   = (i + 1) == len(loader)
+        is_last = (i + 1) == len(loader)
         is_boundary = (i + 1) % accum_steps == 0
 
         if is_boundary or is_last:
@@ -242,8 +257,9 @@ def train_epoch(
             optimizer.zero_grad()
             global_step += 1
             if global_step % log_every == 0:
-                tb_logger.log_step(loss.item() * accum_steps,
-                                   scheduler.get_last_lr()[0], global_step)
+                tb_logger.log_step(
+                    loss.item() * accum_steps, scheduler.get_last_lr()[0], global_step
+                )
 
     return total_loss / max(n_batches, 1), global_step
 
@@ -251,42 +267,50 @@ def train_epoch(
 def eval_epoch(model, loader, criterion, device):
     model.eval()
     total_loss, n_batches = 0.0, 0
-    all_preds, all_true   = [], []
+    all_preds, all_true = [], []
 
     with torch.no_grad():
         for batch in loader:
-            mel    = batch["mel"].to(device)
+            mel = batch["mel"].to(device)
             labels = batch["label"].to(device)
             logits = model(mel)
             total_loss += criterion(logits, labels).item()
-            n_batches  += 1
+            n_batches += 1
             all_preds.extend(logits.argmax(-1).cpu().tolist())
             all_true.extend(labels.cpu().tolist())
 
     val_loss = total_loss / max(n_batches, 1)
-    val_f1   = f1_score(all_true, all_preds, average="macro", zero_division=0)
-    val_acc  = sum(p == t for p, t in zip(all_preds, all_true)) / max(len(all_true), 1)
+    val_f1 = f1_score(all_true, all_preds, average="macro", zero_division=0)
+    val_acc = sum(p == t for p, t in zip(all_preds, all_true)) / max(len(all_true), 1)
     return val_loss, val_f1, val_acc, all_preds, all_true
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--pretrained-encoder", type=Path, default=None,
+        "--pretrained-encoder",
+        type=Path,
+        default=None,
         metavar="PATH",
         help="Path to SimCLR pre-trained encoder weights (outputs/models/simclr_encoder.pt). "
-             "When provided, the encoder is frozen for the first 5 epochs so only the "
-             "classifier head adapts, then all layers are fine-tuned together.",
+        "When provided, the encoder is frozen for the first 5 epochs so only the "
+        "classifier head adapts, then all layers are fine-tuned together.",
     )
     args = parser.parse_args()
 
     logger.add("logs/train_audio.log", rotation="10 MB")
 
-    cfg    = audio_cnn_config()
-    device = torch.device("mps" if torch.backends.mps.is_available()
-                          else "cuda" if torch.cuda.is_available() else "cpu")
+    cfg = audio_cnn_config()
+    device = torch.device(
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
     set_seed(cfg.seed)
     ssl_mode = args.pretrained_encoder is not None
     logger.info(
@@ -299,25 +323,49 @@ def main():
     num_classes = len(class_names)
 
     # ── Datasets ──────────────────────────────────────────────────────────────
-    train_ds = AudioEmotionDataset(cfg.train_jsonl, cfg.max_audio_sec,
-                                   cfg.sample_rate, cfg.n_mels, is_train=True,
-                                   noise_amplitude=cfg.noise_amplitude)
-    val_ds   = AudioEmotionDataset(cfg.val_jsonl,   cfg.max_audio_sec,
-                                   cfg.sample_rate, cfg.n_mels, is_train=False)
-    test_ds  = AudioEmotionDataset(cfg.test_jsonl,  cfg.max_audio_sec,
-                                   cfg.sample_rate, cfg.n_mels, is_train=False)
+    train_ds = AudioEmotionDataset(
+        cfg.train_jsonl,
+        cfg.max_audio_sec,
+        cfg.sample_rate,
+        cfg.n_mels,
+        is_train=True,
+        noise_amplitude=cfg.noise_amplitude,
+    )
+    val_ds = AudioEmotionDataset(
+        cfg.val_jsonl, cfg.max_audio_sec, cfg.sample_rate, cfg.n_mels, is_train=False
+    )
+    test_ds = AudioEmotionDataset(
+        cfg.test_jsonl, cfg.max_audio_sec, cfg.sample_rate, cfg.n_mels, is_train=False
+    )
 
     if len(train_ds) == 0:
-        logger.error("No training samples with emotion_audio labels found. "
-                     "Ensure Pass-A annotation is complete.")
+        logger.error(
+            "No training samples with emotion_audio labels found. "
+            "Ensure Pass-A annotation is complete."
+        )
         return
 
-    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True,
-                              num_workers=0, collate_fn=collate_fn)
-    val_loader   = DataLoader(val_ds,   batch_size=cfg.batch_size, shuffle=False,
-                              num_workers=0, collate_fn=collate_fn)
-    test_loader  = DataLoader(test_ds,  batch_size=cfg.batch_size, shuffle=False,
-                              num_workers=0, collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        num_workers=0,
+        collate_fn=collate_fn,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=collate_fn,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=0,
+        collate_fn=collate_fn,
+    )
 
     # ── Model ─────────────────────────────────────────────────────────────────
     model = Emotion1DCNN(num_classes=num_classes).to(device)
@@ -325,7 +373,7 @@ def main():
     logger.info(f"Emotion1DCNN: {total_params:,} params")
     assert total_params <= 50_000_000, f"CNN exceeds 50M constraint: {total_params:,}"
 
-    # ── Load SimCLR pre-trained encoder (Week 4 SSL lab technique) ────────────
+    # ── Load SimCLR pre-trained encoder ────────────────────────────────────────
     if ssl_mode:
         ckpt_path = args.pretrained_encoder
         if not ckpt_path.exists():
@@ -342,8 +390,8 @@ def main():
         )
         # Freeze the encoder for the first HEAD_FREEZE_EPOCHS epochs so the
         # randomly-initialised classifier head can stabilise before end-to-end
-        # fine-tuning begins (same strategy as gradual unfreeze in Week 4).
-        HEAD_FREEZE_EPOCHS = 10   # more head-only epochs before touching encoder
+        # fine-tuning begins (same strategy as gradual unfreeze).
+        HEAD_FREEZE_EPOCHS = 10  # more head-only epochs before touching encoder
         for param in model.features.parameters():
             param.requires_grad = False
         logger.info(
@@ -354,10 +402,11 @@ def main():
         HEAD_FREEZE_EPOCHS = 0
 
     # ── Class weights ─────────────────────────────────────────────────────────
-    train_labels    = [s["label"] for s in train_ds.samples]
+    train_labels = [s["label"] for s in train_ds.samples]
     present_classes = np.unique(train_labels)
-    class_w_present = compute_class_weight("balanced",
-                                           classes=present_classes, y=train_labels)
+    class_w_present = compute_class_weight(
+        "balanced", classes=present_classes, y=train_labels
+    )
     class_w = np.ones(num_classes, dtype=np.float32)
     for cls_id, w in zip(present_classes, class_w_present):
         class_w[cls_id] = w
@@ -369,20 +418,25 @@ def main():
     # Focal loss dampens gradients for uncertain predictions — harmful for random init
     # where ALL predictions are uncertain. Let the model learn first, then class
     # weights alone handle imbalance.
-    criterion = nn.CrossEntropyLoss(weight=class_weights,
-                                     label_smoothing=cfg.label_smoothing)
+    criterion = nn.CrossEntropyLoss(
+        weight=class_weights, label_smoothing=cfg.label_smoothing
+    )
     logger.info(f"Loss: CrossEntropyLoss(label_smoothing={cfg.label_smoothing})")
 
     # ── Optimizer (simple AdamW — CNN is trained from scratch, no disc LR) ───
-    optimizer = torch.optim.AdamW(model.parameters(),
-                                  lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
+    )
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
     total_steps = (len(train_loader) // cfg.grad_accum_steps) * cfg.epochs
     if cfg.scheduler == "one_cycle":
-        scheduler = get_one_cycle_scheduler(optimizer, cfg.learning_rate, total_steps,
-                                            pct_start=cfg.warmup_ratio)
-        logger.info(f"Scheduler: OneCycleLR (max_lr={cfg.learning_rate}, steps={total_steps})")
+        scheduler = get_one_cycle_scheduler(
+            optimizer, cfg.learning_rate, total_steps, pct_start=cfg.warmup_ratio
+        )
+        logger.info(
+            f"Scheduler: OneCycleLR (max_lr={cfg.learning_rate}, steps={total_steps})"
+        )
     else:
         scheduler = get_scheduler(optimizer, total_steps, cfg.warmup_ratio)
         logger.info(f"Scheduler: warmup+cosine (steps={total_steps})")
@@ -395,9 +449,13 @@ def main():
     # ── TensorBoard ───────────────────────────────────────────────────────────
     tb_logger = TensorBoardLogger(cfg.tensorboard_dir, "audio_cnn", cfg.task)
     tb_logger.log_hparams(
-        hparam_dict={"lr": cfg.learning_rate, "batch": cfg.batch_size,
-                     "epochs": cfg.epochs, "n_mels": cfg.n_mels,
-                     "max_audio_sec": cfg.max_audio_sec},
+        hparam_dict={
+            "lr": cfg.learning_rate,
+            "batch": cfg.batch_size,
+            "epochs": cfg.epochs,
+            "n_mels": cfg.n_mels,
+            "max_audio_sec": cfg.max_audio_sec,
+        },
         metric_dict={"hparam/val_macro_f1": 0.0},
     )
 
@@ -417,11 +475,13 @@ def main():
     # ── Training loop ─────────────────────────────────────────────────────────
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     early_stopper = EarlyStopper(cfg.patience, cfg.output_dir, "audio_cnn_emotion")
-    global_step   = 0
-    best_val_f1   = 0.0
+    global_step = 0
+    best_val_f1 = 0.0
 
     logger.info("=" * 60)
-    logger.info(f"Starting training: {cfg.epochs} epochs, {len(train_loader)} steps/epoch")
+    logger.info(
+        f"Starting training: {cfg.epochs} epochs, {len(train_loader)} steps/epoch"
+    )
     logger.info("=" * 60)
 
     for epoch in range(cfg.epochs):
@@ -432,22 +492,38 @@ def main():
         if ssl_mode and epoch == HEAD_FREEZE_EPOCHS:
             for param in model.features.parameters():
                 param.requires_grad = True
-            encoder_lr = cfg.learning_rate * 0.01   # 1e-5 (was 1e-4 — too aggressive)
+            encoder_lr = cfg.learning_rate * 0.01  # 1e-5 (was 1e-4 — too aggressive)
             # Discriminative LRs: tiny for pre-trained encoder, normal for head
-            optimizer = torch.optim.AdamW([
-                {"params": model.features.parameters(), "lr": encoder_lr},
-                {"params": model.classifier.parameters(), "lr": cfg.learning_rate * 0.1},
-            ], weight_decay=cfg.weight_decay)
-            remaining = (cfg.epochs - HEAD_FREEZE_EPOCHS) * (len(train_loader) // cfg.grad_accum_steps)
+            optimizer = torch.optim.AdamW(
+                [
+                    {"params": model.features.parameters(), "lr": encoder_lr},
+                    {
+                        "params": model.classifier.parameters(),
+                        "lr": cfg.learning_rate * 0.1,
+                    },
+                ],
+                weight_decay=cfg.weight_decay,
+            )
+            remaining = (cfg.epochs - HEAD_FREEZE_EPOCHS) * (
+                len(train_loader) // cfg.grad_accum_steps
+            )
             scheduler = get_scheduler(optimizer, remaining, cfg.warmup_ratio)
             logger.info(
-                f"Epoch {epoch+1}: encoder unfrozen — discriminative LR: "
+                f"Epoch {epoch + 1}: encoder unfrozen — discriminative LR: "
                 f"encoder={encoder_lr:.1e}, head={cfg.learning_rate * 0.1:.1e}"
             )
 
         train_loss, global_step = train_epoch(
-            model, train_loader, optimizer, scheduler, criterion, device,
-            tb_logger, global_step, cfg.log_every_n_steps, cfg.grad_accum_steps,
+            model,
+            train_loader,
+            optimizer,
+            scheduler,
+            criterion,
+            device,
+            tb_logger,
+            global_step,
+            cfg.log_every_n_steps,
+            cfg.grad_accum_steps,
         )
         tb_logger.log_histograms(model, epoch)
 
@@ -457,7 +533,7 @@ def main():
         tb_logger.log_epoch(epoch, train_loss, val_loss, val_f1, val_acc)
 
         logger.info(
-            f"Epoch {epoch+1:3d}/{cfg.epochs} | "
+            f"Epoch {epoch + 1:3d}/{cfg.epochs} | "
             f"train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | "
             f"val_F1={val_f1:.4f} | val_acc={val_acc:.3f}"
         )
@@ -465,14 +541,13 @@ def main():
         if (epoch + 1) % 5 == 0:
             short_names = [c.split("(")[0].strip() for c in class_names]
             fig = make_confusion_figure(
-                val_true, val_preds, short_names,
-                f"Val Confusion — Epoch {epoch+1}"
+                val_true, val_preds, short_names, f"Val Confusion — Epoch {epoch + 1}"
             )
             tb_logger.log_confusion_matrix(fig, "confusion/emotion_audio/val", epoch)
             plt.close(fig)
 
         if early_stopper.step(val_f1, model):
-            logger.info(f"Early stopping at epoch {epoch+1}")
+            logger.info(f"Early stopping at epoch {epoch + 1}")
             break
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
@@ -493,18 +568,24 @@ def main():
     report_dir = Path("outputs/reports")
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    short_names   = [c.split("(")[0].strip() for c in class_names]
-    present_ids   = sorted(set(test_true))
+    short_names = [c.split("(")[0].strip() for c in class_names]
+    present_ids = sorted(set(test_true))
     present_names = [short_names[i] for i in present_ids]
-    report_str = classification_report(test_true, test_preds,
-                                       labels=present_ids, target_names=present_names,
-                                       zero_division=0)
+    report_str = classification_report(
+        test_true,
+        test_preds,
+        labels=present_ids,
+        target_names=present_names,
+        zero_division=0,
+    )
     logger.info(f"\n{report_str}")
     (report_dir / "audio_cnn_emotion_report.txt").write_text(report_str)
 
     fig = make_confusion_figure(
-        test_true, test_preds, short_names,
-        f"Test Confusion — AudioCNN | emotion_audio | Macro-F1={test_f1:.3f}"
+        test_true,
+        test_preds,
+        short_names,
+        f"Test Confusion — AudioCNN | emotion_audio | Macro-F1={test_f1:.3f}",
     )
     fig_path = report_dir / "audio_cnn_emotion_confusion.png"
     fig.savefig(fig_path, bbox_inches="tight", dpi=150)
@@ -512,7 +593,11 @@ def main():
     plt.close(fig)
 
     tb_logger.log_hparams(
-        hparam_dict={"lr": cfg.learning_rate, "batch": cfg.batch_size, "epochs": cfg.epochs},
+        hparam_dict={
+            "lr": cfg.learning_rate,
+            "batch": cfg.batch_size,
+            "epochs": cfg.epochs,
+        },
         metric_dict={"hparam/test_macro_f1": test_f1, "hparam/test_acc": test_acc},
     )
     tb_logger.close()

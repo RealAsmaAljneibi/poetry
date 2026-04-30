@@ -29,26 +29,25 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from loguru import logger
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, f1_score
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.labels import (
     GENRE_CLASSES,
-    encode_genre,
     get_merged_emotion_classes,
-    encode_emotion_with_profile,
 )
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).parent.parent
-DATA_DIR     = PROJECT_ROOT / "data/processed"
-FIGURES_DIR  = PROJECT_ROOT / "outputs/figures"
-REPORT_DIR   = PROJECT_ROOT / "outputs/reports"
-GENRE_CKPT   = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
+DATA_DIR = PROJECT_ROOT / "data/processed"
+FIGURES_DIR = PROJECT_ROOT / "outputs/figures"
+REPORT_DIR = PROJECT_ROOT / "outputs/reports"
+GENRE_CKPT = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
 EMOTION_PRED = REPORT_DIR / "poem_emotion_predictions_test.json"
-TEST_JSONL   = DATA_DIR / "test.jsonl"
+TEST_JSONL = DATA_DIR / "test.jsonl"
 
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -57,6 +56,7 @@ GENRE_MERGE_MAP = {"Madih": "Fakhr", "I'tithar": "Ghazal", "Tareef": "Hija"}
 
 
 # ── Plot helper ────────────────────────────────────────────────────────────────
+
 
 def plot_cm(cm: np.ndarray, class_names: list[str], title: str, out_path: Path) -> None:
     n = len(class_names)
@@ -80,8 +80,12 @@ def plot_cm(cm: np.ndarray, class_names: list[str], title: str, out_path: Path) 
     for i in range(n):
         for j in range(n):
             ax.text(
-                j, i, str(cm[i, j]),
-                ha="center", va="center", fontsize=9,
+                j,
+                i,
+                str(cm[i, j]),
+                ha="center",
+                va="center",
+                fontsize=9,
                 color="white" if cm[i, j] > thresh else "black",
             )
 
@@ -93,20 +97,19 @@ def plot_cm(cm: np.ndarray, class_names: list[str], title: str, out_path: Path) 
 
 # ── Genre poem-level confusion matrix ─────────────────────────────────────────
 
+
 def build_genre_confusion() -> None:
     if not GENRE_CKPT.exists():
         logger.error(f"Genre checkpoint not found: {GENRE_CKPT}")
         return
 
-    from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
     device = (
-        torch.device("mps") if torch.backends.mps.is_available()
+        torch.device("mps")
+        if torch.backends.mps.is_available()
         else torch.device("cpu")
     )
 
-    # Merged genre classes (8 classes after merge)
-    raw_classes = GENRE_CLASSES  # 11 classes
+    raw_classes = GENRE_CLASSES
     merged_set: set[str] = set()
     for g in raw_classes:
         short = g.split("(")[0].strip()
@@ -117,7 +120,6 @@ def build_genre_confusion() -> None:
 
     logger.info(f"Genre classes ({n_classes}): {class_names}")
 
-    # Load model
     model = AutoModelForSequenceClassification.from_pretrained(
         "faisalq/bert-base-arapoembert",
         num_labels=n_classes,
@@ -134,14 +136,16 @@ def build_genre_confusion() -> None:
 
     # Load test clips and group by poem
     test_clips = [
-        json.loads(l) for l in TEST_JSONL.read_text(encoding="utf-8").splitlines() if l.strip()
+        json.loads(line_str)
+        for line_str in TEST_JSONL.read_text(encoding="utf-8").splitlines()
+        if line_str.strip()
     ]
     poem_clips: dict[str, list[dict]] = defaultdict(list)
     for rec in test_clips:
         key = (
             rec.get("source_poem")
             or rec.get("poem_id")
-            or f"{rec.get('poet_en','')}|{rec.get('genre_en','')}"
+            or f"{rec.get('poet_en', '')}|{rec.get('genre_en', '')}"
         )
         poem_clips[key].append(rec)
 
@@ -153,7 +157,11 @@ def build_genre_confusion() -> None:
 
         # Gold genre (majority vote, then merge)
         genre_counts = Counter(c.get("genre_en", "") for c in clips_sorted)
-        raw_gold = genre_counts.most_common(1)[0][0].split("(")[0].strip() if genre_counts else ""
+        raw_gold = (
+            genre_counts.most_common(1)[0][0].split("(")[0].strip()
+            if genre_counts
+            else ""
+        )
         gold_merged = GENRE_MERGE_MAP.get(raw_gold, raw_gold)
         if gold_merged not in cls2id:
             continue
@@ -162,13 +170,16 @@ def build_genre_confusion() -> None:
         texts = [c.get("text_corrected", "") for c in clips_sorted]
         logits_list: list[torch.Tensor] = []
         for i in range(len(texts)):
-            window = texts[max(0, i - WINDOW + 1): i + 1]
+            window = texts[max(0, i - WINDOW + 1) : i + 1]
             text = " ".join(w for w in window if w.strip())
             if not text.strip():
                 continue
             enc = tokenizer(
-                text, return_tensors="pt",
-                truncation=True, max_length=32, padding=True,
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=32,
+                padding=True,
             ).to(device)
             with torch.no_grad():
                 logits = model(**enc).logits
@@ -192,16 +203,17 @@ def build_genre_confusion() -> None:
     present_names = [class_names[i] for i in present_ids]
     cm = confusion_matrix(y_true, y_pred, labels=present_ids)
 
-    from sklearn.metrics import f1_score
     f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
     plot_cm(
-        cm, present_names,
+        cm,
+        present_names,
         f"Genre — Poem-level Confusion Matrix (N={len(y_true)} poems)\nMacro-F1 = {f1:.3f}  [GENRE-R4, window=3]",
         FIGURES_DIR / "genre_poem_confusion.png",
     )
 
 
 # ── Emotion poem-level confusion matrices ─────────────────────────────────────
+
 
 def build_emotion_confusion() -> None:
     if not EMOTION_PRED.exists():
@@ -214,7 +226,7 @@ def build_emotion_confusion() -> None:
 
     variants_to_plot = {
         "full_fusion": "Full Fusion (genre-prior + gated audio)",
-        "raw":         "Raw text-only (logit-mean aggregation)",
+        "raw": "Raw text-only (logit-mean aggregation)",
     }
 
     for variant_key, variant_label in variants_to_plot.items():
@@ -226,7 +238,11 @@ def build_emotion_confusion() -> None:
         y_true, y_pred = [], []
 
         # full_fusion uses emotion_poem_final; other variants use predicted_poem_emotion
-        pred_field = "emotion_poem_final" if variant_key == "full_fusion" else "predicted_poem_emotion"
+        pred_field = (
+            "emotion_poem_final"
+            if variant_key == "full_fusion"
+            else "predicted_poem_emotion"
+        )
 
         for poem_id, entry in variant_data.items():
             gold = entry.get("gold_poem_emotion", "")
@@ -248,11 +264,11 @@ def build_emotion_confusion() -> None:
         present_names = [short_names[i] for i in present_ids]
         cm = confusion_matrix(y_true, y_pred, labels=present_ids)
 
-        from sklearn.metrics import f1_score
         f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
         safe_key = variant_key.replace("/", "_")
         plot_cm(
-            cm, present_names,
+            cm,
+            present_names,
             f"Emotion — Poem-level Confusion Matrix  [{variant_label}]\n"
             f"N={len(y_true)} poems  |  Macro-F1 = {f1:.3f}",
             FIGURES_DIR / f"emotion_poem_confusion_{safe_key}.png",
@@ -260,6 +276,7 @@ def build_emotion_confusion() -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     logger.add("logs/plot_confusion_matrices.log", rotation="10 MB")

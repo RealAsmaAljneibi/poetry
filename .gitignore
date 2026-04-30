@@ -71,8 +71,10 @@ logs/
 runs/
 tb_logs/
 
-# uv lock (optional: include if you want reproducible installs)
-# uv.lock
+# uv.lock is committed for reproducible installs
+
+# Internal research/planning documents (not part of the codebase)
+pdf_contents.json
 
 # IDE
 .vscode/

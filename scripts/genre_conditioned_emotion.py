@@ -42,6 +42,7 @@ Usage:
 Output:
     outputs/reports/genre_conditioned_emotion.json
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,6 +54,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from loguru import logger
+from sklearn.metrics import f1_score
 from torch.utils.data import DataLoader
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
@@ -68,38 +70,51 @@ from scripts.train_text_classifier import NabatiTextDataset
 
 logger.add("logs/genre_conditioned_emotion.log", rotation="10 MB")
 
-PROJECT_ROOT    = Path(__file__).parent.parent
-EMOTION_CKPT    = PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
-GENRE_CKPT      = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
-MODEL_NAME      = "faisalq/bert-base-arapoembert"
-MERGE_PROFILE   = "rare_merge_v1"
-CONTEXT_WIN_EMO = 1    # best emotion window
-CONTEXT_WIN_GEN = 3    # best genre window
-MAX_SEQ_LEN     = 32
-BATCH_SIZE      = 32
+PROJECT_ROOT = Path(__file__).parent.parent
+EMOTION_CKPT = (
+    PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+)
+GENRE_CKPT = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
+MODEL_NAME = "faisalq/bert-base-arapoembert"
+MERGE_PROFILE = "rare_merge_v1"
+CONTEXT_WIN_EMO = 1  # best emotion window
+CONTEXT_WIN_GEN = 3  # best genre window
+MAX_SEQ_LEN = 32
+BATCH_SIZE = 32
 
 
 # ── Argument parsing ────────────────────────────────────────────────────────────
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Genre-conditioned emotion evaluation")
-    p.add_argument("--mode", choices=["constrained", "reweight", "both"],
-                   default="both",
-                   help="Decoding mode (default: both)")
-    p.add_argument("--lambda-prior", type=float, default=0.5,
-                   help="λ for genre-prior reweighting (default: 0.5). 0=raw, 1=full.")
-    p.add_argument("--merge-profile", default=MERGE_PROFILE,
-                   choices=["none", "rare_merge_v1"])
+    p.add_argument(
+        "--mode",
+        choices=["constrained", "reweight", "both"],
+        default="both",
+        help="Decoding mode (default: both)",
+    )
+    p.add_argument(
+        "--lambda-prior",
+        type=float,
+        default=0.5,
+        help="λ for genre-prior reweighting (default: 0.5). 0=raw, 1=full.",
+    )
+    p.add_argument(
+        "--merge-profile", default=MERGE_PROFILE, choices=["none", "rare_merge_v1"]
+    )
     return p.parse_args()
 
 
 # ── Data helpers ────────────────────────────────────────────────────────────────
+
 
 def load_jsonl(path: Path) -> list[dict]:
     return [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
 
 
 # ── Genre-prior estimation from train split ─────────────────────────────────────
+
 
 def estimate_genre_emotion_prior(
     train_path: Path, merge_profile: str
@@ -110,7 +125,7 @@ def estimate_genre_emotion_prior(
     """
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for rec in load_jsonl(train_path):
-        genre   = rec.get("genre_en", "")
+        genre = rec.get("genre_en", "")
         emotion = rec.get("emotion_text", "") or rec.get("emotion_cat_en", "")
         if not genre or not emotion:
             continue
@@ -126,6 +141,7 @@ def estimate_genre_emotion_prior(
 
 # ── Constrained decoding ────────────────────────────────────────────────────────
 
+
 def constrained_decode(
     probs: np.ndarray,
     id2label: dict[int, str],
@@ -139,26 +155,20 @@ def constrained_decode(
     Returns (emotion_label, confidence).
     """
     expected = get_genre_expected_emotions(genre, merge_profile)
-
-    # Rank all classes by probability
     ranked = sorted(range(len(probs)), key=lambda i: probs[i], reverse=True)
-
-    # If top-1 is already genre-plausible, keep it unchanged
     top1_label = id2label.get(ranked[0], "")
     if top1_label in expected:
         return top1_label, float(probs[ranked[0]])
-
-    # Otherwise select the highest-probability emotion inside expected set
     for idx in ranked:
         label = id2label.get(idx, "")
         if label in expected:
             return label, float(probs[idx])
-
-    # Fallback: return raw top-1 (expected set empty or no overlap)
+    # expected set empty or no overlap — fall back to raw top-1
     return top1_label, float(probs[ranked[0]])
 
 
 # ── Genre-prior reweighting ─────────────────────────────────────────────────────
+
 
 def reweight_decode(
     probs: np.ndarray,
@@ -177,7 +187,7 @@ def reweight_decode(
     for i in range(n):
         label = id2label.get(i, "")
         p_genre = genre_prior.get(label, 1e-6)  # smoothed zero
-        weighted[i] = probs[i] * (p_genre ** lam)
+        weighted[i] = probs[i] * (p_genre**lam)
 
     total = weighted.sum()
     if total > 0:
@@ -189,10 +199,12 @@ def reweight_decode(
 
 # ── Evaluation helpers ──────────────────────────────────────────────────────────
 
+
 def macro_f1_from_lists(preds: list[str], trues: list[str]) -> float:
-    from sklearn.metrics import f1_score
     labels = sorted(set(trues))
-    return float(f1_score(trues, preds, labels=labels, average="macro", zero_division=0))
+    return float(
+        f1_score(trues, preds, labels=labels, average="macro", zero_division=0)
+    )
 
 
 def poem_level_f1(preds: list[str], trues: list[str], poem_ids: list[str]) -> float:
@@ -211,9 +223,10 @@ def poem_level_f1(preds: list[str], trues: list[str], poem_ids: list[str]) -> fl
         p_preds.append(max(counts, key=lambda k: counts[k]))
         p_trues.append(poem_true[pid])
 
-    from sklearn.metrics import f1_score
     labels = sorted(set(p_trues))
-    return float(f1_score(p_trues, p_preds, labels=labels, average="macro", zero_division=0))
+    return float(
+        f1_score(p_trues, p_preds, labels=labels, average="macro", zero_division=0)
+    )
 
 
 def genre_plausibility_rate(
@@ -233,8 +246,7 @@ def genre_plausibility_rate(
 
 
 def mean_partial_credit_score(
-    preds: list[str], trues: list[str],
-    audio_emotions: list[str], genres: list[str]
+    preds: list[str], trues: list[str], audio_emotions: list[str], genres: list[str]
 ) -> float:
     scores = [
         emotion_partial_credit(p, a, t, g)
@@ -245,37 +257,52 @@ def mean_partial_credit_score(
 
 # ── Main ────────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     args = parse_args()
     merge_profile = args.merge_profile
-    lam           = args.lambda_prior
+    lam = args.lambda_prior
 
-    device    = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, local_files_only=True)
 
     merged_classes = get_merged_emotion_classes(merge_profile)
-    num_emo        = len(merged_classes)
-    id2emo         = {i: lbl for i, lbl in enumerate(merged_classes)}
+    num_emo = len(merged_classes)
+    id2emo = {i: lbl for i, lbl in enumerate(merged_classes)}
 
-    genre_classes  = list(GENRE2ID.keys())
-    num_gen        = len(genre_classes)
-    id2gen         = {i: lbl for i, lbl in enumerate(genre_classes)}
+    genre_classes = list(GENRE2ID.keys())
+    num_gen = len(genre_classes)
+    id2gen = {i: lbl for i, lbl in enumerate(genre_classes)}
 
     # ── Load emotion model ──────────────────────────────────────────────────────
-    logger.info("Loading emotion model: {} ({} classes, window={})",
-                EMOTION_CKPT.name, num_emo, CONTEXT_WIN_EMO)
+    logger.info(
+        "Loading emotion model: {} ({} classes, window={})",
+        EMOTION_CKPT.name,
+        num_emo,
+        CONTEXT_WIN_EMO,
+    )
     emo_model = AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME, num_labels=num_emo, ignore_mismatched_sizes=True, local_files_only=True,
+        MODEL_NAME,
+        num_labels=num_emo,
+        ignore_mismatched_sizes=True,
+        local_files_only=True,
     ).to(device)
     state = torch.load(EMOTION_CKPT, map_location=device, weights_only=False)
     emo_model.load_state_dict(state, strict=False)
     emo_model.eval()
 
     # ── Load genre model ────────────────────────────────────────────────────────
-    logger.info("Loading genre model: {} ({} classes, window={})",
-                GENRE_CKPT.name, num_gen, CONTEXT_WIN_GEN)
+    logger.info(
+        "Loading genre model: {} ({} classes, window={})",
+        GENRE_CKPT.name,
+        num_gen,
+        CONTEXT_WIN_GEN,
+    )
     gen_model = AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME, num_labels=num_gen, ignore_mismatched_sizes=True, local_files_only=True,
+        MODEL_NAME,
+        num_labels=num_gen,
+        ignore_mismatched_sizes=True,
+        local_files_only=True,
     ).to(device)
     gen_state = torch.load(GENRE_CKPT, map_location=device, weights_only=False)
     gen_model.load_state_dict(gen_state, strict=False)
@@ -284,28 +311,34 @@ def main() -> None:
     # ── Build datasets ──────────────────────────────────────────────────────────
     test_path = PROJECT_ROOT / "data/processed/test.jsonl"
     emo_ds = NabatiTextDataset(
-        test_path, tokenizer, task="emotion_text",
-        max_seq_len=MAX_SEQ_LEN, context_window=CONTEXT_WIN_EMO,
+        test_path,
+        tokenizer,
+        task="emotion_text",
+        max_seq_len=MAX_SEQ_LEN,
+        context_window=CONTEXT_WIN_EMO,
         emotion_merge_profile=merge_profile,
     )
     gen_ds = NabatiTextDataset(
-        test_path, tokenizer, task="genre",
-        max_seq_len=MAX_SEQ_LEN, context_window=CONTEXT_WIN_GEN,
+        test_path,
+        tokenizer,
+        task="genre",
+        max_seq_len=MAX_SEQ_LEN,
+        context_window=CONTEXT_WIN_GEN,
     )
 
     emo_loader = DataLoader(emo_ds, batch_size=BATCH_SIZE, shuffle=False)
     gen_loader = DataLoader(gen_ds, batch_size=BATCH_SIZE, shuffle=False)
 
     # ── Run emotion inference ───────────────────────────────────────────────────
-    all_emo_probs:  list[np.ndarray] = []
-    all_true_emo:   list[str] = []
-    all_poem_ids:   list[str] = []
+    all_emo_probs: list[np.ndarray] = []
+    all_true_emo: list[str] = []
+    all_poem_ids: list[str] = []
 
     with torch.no_grad():
         for batch in emo_loader:
             logits = emo_model(
-                input_ids      = batch["input_ids"].to(device),
-                attention_mask = batch["attention_mask"].to(device),
+                input_ids=batch["input_ids"].to(device),
+                attention_mask=batch["attention_mask"].to(device),
             ).logits
             probs = torch.softmax(logits, dim=-1).cpu().numpy()
             for p in probs:
@@ -319,15 +352,16 @@ def main() -> None:
     with torch.no_grad():
         for batch in gen_loader:
             logits = gen_model(
-                input_ids      = batch["input_ids"].to(device),
-                attention_mask = batch["attention_mask"].to(device),
+                input_ids=batch["input_ids"].to(device),
+                attention_mask=batch["attention_mask"].to(device),
             ).logits
             pred_ids = logits.argmax(dim=-1).cpu().tolist()
             for gid in pred_ids:
                 all_pred_genres.append(id2gen.get(gid, ""))
 
-    assert len(all_emo_probs) == len(all_pred_genres) == len(all_true_emo), \
+    assert len(all_emo_probs) == len(all_pred_genres) == len(all_true_emo), (
         f"Length mismatch: {len(all_emo_probs)} vs {len(all_pred_genres)} vs {len(all_true_emo)}"
+    )
 
     # ── Load raw test records for audio emotion reference ───────────────────────
     raw_rows: dict[str, dict] = {}
@@ -367,32 +401,38 @@ def main() -> None:
 
     # ── Compute metrics ───────────────────────────────────────────────────────────
     def eval_system(preds: list[str], name: str) -> dict:
-        clip_f1   = macro_f1_from_lists(preds, all_true_emo)
-        poem_f1   = poem_level_f1(preds, all_true_emo, all_poem_ids)
-        pc        = mean_partial_credit_score(preds, all_true_emo, audio_emotions, true_genres_ref)
-        plaus     = genre_plausibility_rate(preds, all_pred_genres, merge_profile)
+        clip_f1 = macro_f1_from_lists(preds, all_true_emo)
+        poem_f1 = poem_level_f1(preds, all_true_emo, all_poem_ids)
+        pc = mean_partial_credit_score(
+            preds, all_true_emo, audio_emotions, true_genres_ref
+        )
+        plaus = genre_plausibility_rate(preds, all_pred_genres, merge_profile)
         logger.info(
             "{}: clip_f1={:.4f}  poem_f1={:.4f}  partial_credit={:.4f}  plausibility={:.1%}",
-            name, clip_f1, poem_f1, pc, plaus
+            name,
+            clip_f1,
+            poem_f1,
+            pc,
+            plaus,
         )
         return {
-            "clip_macro_f1":        round(clip_f1, 4),
-            "poem_macro_f1":        round(poem_f1, 4),
-            "mean_partial_credit":  round(pc, 4),
-            "genre_plausibility":   round(plaus, 4),
+            "clip_macro_f1": round(clip_f1, 4),
+            "poem_macro_f1": round(poem_f1, 4),
+            "mean_partial_credit": round(pc, 4),
+            "genre_plausibility": round(plaus, 4),
         }
 
     logger.info("=" * 60)
     logger.info("Genre-Conditioned Emotion Evaluation")
     logger.info("=" * 60)
-    raw_metrics         = eval_system(raw_preds,          "raw")
-    constrained_metrics = eval_system(constrained_preds,  "constrained")
-    reweight_metrics    = eval_system(reweight_preds,      f"reweight(λ={lam})")
+    raw_metrics = eval_system(raw_preds, "raw")
+    constrained_metrics = eval_system(constrained_preds, "constrained")
+    reweight_metrics = eval_system(reweight_preds, f"reweight(λ={lam})")
 
     # ── Determine best system ─────────────────────────────────────────────────────
     systems = {
-        "raw":          raw_metrics,
-        "constrained":  constrained_metrics,
+        "raw": raw_metrics,
+        "constrained": constrained_metrics,
         f"reweight_lambda{lam}": reweight_metrics,
     }
     best_system = max(systems, key=lambda k: systems[k]["clip_macro_f1"])
@@ -400,19 +440,18 @@ def main() -> None:
 
     # ── Compute delta raw vs constrained ─────────────────────────────────────────
     delta_constrained = {
-        k: round(constrained_metrics[k] - raw_metrics[k], 4)
-        for k in raw_metrics
+        k: round(constrained_metrics[k] - raw_metrics[k], 4) for k in raw_metrics
     }
 
     # ── Save results ──────────────────────────────────────────────────────────────
     out = {
-        "merge_profile":   merge_profile,
-        "context_window":  CONTEXT_WIN_EMO,
-        "num_classes":     num_emo,
-        "lambda_prior":    lam,
-        "n_test_clips":    len(all_emo_probs),
-        "systems":         systems,
-        "best_system":     best_system,
+        "merge_profile": merge_profile,
+        "context_window": CONTEXT_WIN_EMO,
+        "num_classes": num_emo,
+        "lambda_prior": lam,
+        "n_test_clips": len(all_emo_probs),
+        "systems": systems,
+        "best_system": best_system,
         "delta_constrained_vs_raw": delta_constrained,
         "adopted_system": (
             "constrained"
@@ -431,20 +470,22 @@ def main() -> None:
     logger.info("Results saved → {}", out_path)
 
     # ── Human-readable summary ────────────────────────────────────────────────────
-    print("\n" + "=" * 65)
-    print("  Genre-Conditioned Emotion Results")
-    print("=" * 65)
+    logger.info("\n" + "=" * 65)
+    logger.info("  Genre-Conditioned Emotion Results")
+    logger.info("=" * 65)
     for name, m in systems.items():
         tag = " ← BEST" if name == best_system else ""
-        print(f"  {name:35s}  clip_F1={m['clip_macro_f1']:.4f}"
-              f"  partial_credit={m['mean_partial_credit']:.4f}"
-              f"  plaus={m['genre_plausibility']:.1%}{tag}")
-    print("\n  Δ constrained vs raw:")
+        logger.info(
+            f"  {name:35s}  clip_F1={m['clip_macro_f1']:.4f}"
+            f"  partial_credit={m['mean_partial_credit']:.4f}"
+            f"  plaus={m['genre_plausibility']:.1%}{tag}"
+        )
+    logger.info("\n  Δ constrained vs raw:")
     for k, v in delta_constrained.items():
         arrow = "+" if v >= 0 else ""
-        print(f"    {k:25s}: {arrow}{v:+.4f}")
-    print(f"\n  Adopted final system: {out['adopted_system']}")
-    print("=" * 65)
+        logger.info(f"    {k:25s}: {arrow}{v:+.4f}")
+    logger.info(f"\n  Adopted final system: {out['adopted_system']}")
+    logger.info("=" * 65)
 
 
 if __name__ == "__main__":

@@ -28,69 +28,99 @@ from pydantic import BaseModel, Field, field_validator, model_validator, ConfigD
 
 # ── Base: shared by all training jobs ──────────────────────────────────────
 
+
 class BaseTrainConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)   # immutable after creation → no accidental mutation
+    model_config = ConfigDict(
+        frozen=True
+    )  # immutable after creation → no accidental mutation
 
     # ── Optimisation ───────────────────────────────────────────────────────
-    epochs:        int   = Field(default=10,  ge=1,   le=100,
-                                 description="Max training epochs. [1, 100]")
-    batch_size:    int   = Field(default=16,  ge=1,   le=256,
-                                 description="Mini-batch size. [1, 256]")
-    learning_rate: float = Field(default=2e-5, ge=1e-7, le=1e-1,
-                                 description="Peak LR. [1e-7, 0.1] — values outside this diverge or freeze.")
-    weight_decay:  float = Field(default=0.01, ge=0.0, le=1.0,
-                                 description="AdamW weight decay. [0, 1]")
-    warmup_ratio:  float = Field(default=0.1,  ge=0.0, le=0.5,
-                                 description="Fraction of steps used for LR warmup. [0, 0.5]")
-    dropout:       float = Field(default=0.1,  ge=0.0, lt=1.0,
-                                 description="Dropout rate. [0, 1) — 1.0 would zero all outputs.")
+    epochs: int = Field(
+        default=10, ge=1, le=100, description="Max training epochs. [1, 100]"
+    )
+    batch_size: int = Field(
+        default=16, ge=1, le=256, description="Mini-batch size. [1, 256]"
+    )
+    learning_rate: float = Field(
+        default=2e-5,
+        ge=1e-7,
+        le=1e-1,
+        description="Peak LR. [1e-7, 0.1] — values outside this diverge or freeze.",
+    )
+    weight_decay: float = Field(
+        default=0.01, ge=0.0, le=1.0, description="AdamW weight decay. [0, 1]"
+    )
+    warmup_ratio: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=0.5,
+        description="Fraction of steps used for LR warmup. [0, 0.5]",
+    )
+    dropout: float = Field(
+        default=0.1,
+        ge=0.0,
+        lt=1.0,
+        description="Dropout rate. [0, 1) — 1.0 would zero all outputs.",
+    )
 
     # ── Early stopping ──────────────────────────────────────────────────────
-    patience:      int   = Field(default=5,   ge=1,   le=50,
-                                 description="Epochs without val improvement before stopping. [1, 50]")
+    patience: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Epochs without val improvement before stopping. [1, 50]",
+    )
 
     # ── Paths ───────────────────────────────────────────────────────────────
-    train_jsonl:   Path  = Field(..., description="Path to train split JSONL")
-    val_jsonl:     Path  = Field(..., description="Path to val split JSONL")
-    test_jsonl:    Path  = Field(..., description="Path to test split JSONL")
-    output_dir:    Path  = Field(..., description="Where to save checkpoints and reports")
+    train_jsonl: Path = Field(..., description="Path to train split JSONL")
+    val_jsonl: Path = Field(..., description="Path to val split JSONL")
+    test_jsonl: Path = Field(..., description="Path to test split JSONL")
+    output_dir: Path = Field(..., description="Where to save checkpoints and reports")
 
     # ── TensorBoard ─────────────────────────────────────────────────────────
     tensorboard_dir: Path = Field(
         default=Path("outputs/runs"),
-        description="SummaryWriter log root. Each run gets a subfolder: <model>_<task>_<timestamp>"
+        description="SummaryWriter log root. Each run gets a subfolder: <model>_<task>_<timestamp>",
     )
-    log_every_n_steps: int = Field(default=10, ge=1, le=1000,
-                                    description="How often to write scalar metrics to TensorBoard.")
+    log_every_n_steps: int = Field(
+        default=10,
+        ge=1,
+        le=1000,
+        description="How often to write scalar metrics to TensorBoard.",
+    )
 
-    # ── Gradient accumulation (Week 4 SSL lab) ──────────────────────────────
+    # ── Gradient accumulation ───────────────────────────────────────────────
     grad_accum_steps: int = Field(
-        default=1, ge=1, le=32,
+        default=1,
+        ge=1,
+        le=32,
         description=(
             "Accumulate gradients over N micro-batches before stepping the optimizer. "
             "Effective batch size = batch_size × grad_accum_steps. "
             "Use 4 when batch_size=16 to simulate batch_size=64 on limited GPU memory. [1, 32]"
-        )
+        ),
     )
 
     # ── Label Smoothing (prevents overconfidence, improves calibration) ────────
     label_smoothing: float = Field(
-        default=0.1, ge=0.0, lt=0.5,
+        default=0.1,
+        ge=0.0,
+        lt=0.5,
         description=(
             "Cross-entropy label smoothing ε. Replaces hard targets with soft "
             "targets (ε/K for wrong classes, 1-ε+ε/K for the true class). "
             "ε=0.1 is standard; improves ECE by ~30-50%. 0.0 = disabled. [0, 0.5)"
-        )
+        ),
     )
 
-    # ── LR Scheduler (Week 4 lab: OneCycleLR preferred for limited data) ────────
+    # ── LR Scheduler ─────────────────────────────────────────────────────────
     scheduler: Literal["cosine", "one_cycle"] = Field(
         default="cosine",
         description=(
             "'cosine' = linear warmup + cosine decay (stable default). "
             "'one_cycle' = OneCycleLR: rises to max_lr then decays; "
             "preferred for small datasets — often converges faster."
-        )
+        ),
     )
 
     # ── Reproducibility ─────────────────────────────────────────────────────
@@ -99,14 +129,15 @@ class BaseTrainConfig(BaseModel):
 
 # ── Text Classifier (mBERT / AraPoemBERT) ──────────────────────────────────
 
+
 class TextClassifierConfig(BaseTrainConfig):
     """
     Config for fine-tuning any HuggingFace encoder on genre or emotion classification.
 
-    Supports three techniques from course lectures:
-      - Discriminative LR: lower LR for earlier transformer layers (Week 4)
-      - Gradual unfreezing: unfreeze 1-2 layers per epoch, not all at once (Week 4)
-      - Focal loss: down-weights easy majority class (Ghazal) to improve Macro-F1 (Week 3)
+    Supports three fine-tuning techniques:
+      - Discriminative LR: lower LR for earlier transformer layers
+      - Gradual unfreezing: unfreeze 1-2 layers per epoch, not all at once
+      - Focal loss: down-weights easy majority class (Ghazal) to improve Macro-F1
     """
 
     # ── Task ────────────────────────────────────────────────────────────────
@@ -115,43 +146,51 @@ class TextClassifierConfig(BaseTrainConfig):
     )
     model_name: str = Field(
         default="CAMeL-Lab/bert-base-arabic-camelbert-msa",
-        description="HuggingFace model ID. Use 'faisalq/bert-base-arapoembert' for domain-adapted training."
+        description="HuggingFace model ID. Use 'faisalq/bert-base-arapoembert' for domain-adapted training.",
     )
 
     # ── Sequence ────────────────────────────────────────────────────────────
     max_seq_len: int = Field(
-        default=128, ge=16, le=512,
-        description="Max token length. BERT hard limit is 512. [16, 512]"
+        default=128,
+        ge=16,
+        le=512,
+        description="Max token length. BERT hard limit is 512. [16, 512]",
     )
 
-    # ── Discriminative LR (Week 4) ──────────────────────────────────────────
+    # ── Discriminative LR ───────────────────────────────────────────────────
     discriminative_lr_decay: float = Field(
-        default=0.9, ge=0.1, le=1.0,
+        default=0.9,
+        ge=0.1,
+        le=1.0,
         description=(
             "Per-layer LR multiplier (bottom-up). "
             "Layer 0 LR = learning_rate * decay^11; top layer = learning_rate. "
             "1.0 = uniform LR (disabled). [0.1, 1.0]"
-        )
+        ),
     )
 
-    # ── Gradual Unfreezing (Week 4) ─────────────────────────────────────────
+    # ── Gradual Unfreezing ──────────────────────────────────────────────────
     gradual_unfreeze_epochs: int = Field(
-        default=2, ge=0, le=12,
+        default=2,
+        ge=0,
+        le=12,
         description=(
             "Unfreeze 1 transformer layer group every N epochs, starting from the top. "
             "BERT-base has 12 layers, so max meaningful value is 12. "
             "0 = train all layers from epoch 1. [0, 12]"
-        )
+        ),
     )
 
-    # ── Focal Loss (Week 3) ──────────────────────────────────────────────────
+    # ── Focal Loss ───────────────────────────────────────────────────────────
     use_focal_loss: bool = Field(
         default=False,
-        description="Replace cross-entropy with focal loss to handle class imbalance."
+        description="Replace cross-entropy with focal loss to handle class imbalance.",
     )
     focal_gamma: float = Field(
-        default=2.0, ge=0.0, le=5.0,
-        description="Focal loss focusing parameter γ. 0 = standard CE. Typical range [1, 3]. [0, 5]"
+        default=2.0,
+        ge=0.0,
+        le=5.0,
+        description="Focal loss focusing parameter γ. 0 = standard CE. Typical range [1, 3]. [0, 5]",
     )
 
     # ── Cross-field validation ───────────────────────────────────────────────
@@ -165,7 +204,21 @@ class TextClassifierConfig(BaseTrainConfig):
         return self
 
 
+# ── Shared validator ────────────────────────────────────────────────────────
+
+
+def _validate_standard_sample_rate(v: int) -> int:
+    standard = {8000, 16000, 22050, 44100, 48000}
+    if v not in standard:
+        raise ValueError(
+            f"sample_rate={v} is non-standard. Use one of {sorted(standard)} "
+            "to avoid librosa resampling artefacts."
+        )
+    return v
+
+
 # ── Audio CNN ───────────────────────────────────────────────────────────────
+
 
 class AudioCNNConfig(BaseTrainConfig):
     """
@@ -174,36 +227,45 @@ class AudioCNNConfig(BaseTrainConfig):
 
     task: Literal["emotion_audio"] = Field(
         default="emotion_audio",
-        description="Audio CNN always predicts emotion_audio (human-annotated)."
+        description="Audio CNN always predicts emotion_audio (human-annotated).",
     )
 
     # ── Audio preprocessing ──────────────────────────────────────────────────
-    max_audio_sec: int   = Field(default=8,   ge=1,  le=30,
-                                  description="Clips longer than this are truncated. [1, 30]")
-    sample_rate:   int   = Field(default=16000, ge=8000, le=48000,
-                                  description="Resampling rate in Hz. [8000, 48000]")
-    n_mels:        int   = Field(default=128,  ge=32, le=256,
-                                  description="Number of mel filterbank channels. [32, 256]")
+    max_audio_sec: int = Field(
+        default=8,
+        ge=1,
+        le=30,
+        description="Clips longer than this are truncated. [1, 30]",
+    )
+    sample_rate: int = Field(
+        default=16000,
+        ge=8000,
+        le=48000,
+        description="Resampling rate in Hz. [8000, 48000]",
+    )
+    n_mels: int = Field(
+        default=128,
+        ge=32,
+        le=256,
+        description="Number of mel filterbank channels. [32, 256]",
+    )
 
     # ── Augmentation ─────────────────────────────────────────────────────────
     noise_amplitude: float = Field(
-        default=0.005, ge=0.0, le=0.1,
-        description="Gaussian noise injection amplitude (fraction of signal max). [0, 0.1]"
+        default=0.005,
+        ge=0.0,
+        le=0.1,
+        description="Gaussian noise injection amplitude (fraction of signal max). [0, 0.1]",
     )
 
     @field_validator("sample_rate")
     @classmethod
     def sample_rate_must_be_standard(cls, v: int) -> int:
-        standard = {8000, 16000, 22050, 44100, 48000}
-        if v not in standard:
-            raise ValueError(
-                f"sample_rate={v} is non-standard. Use one of {sorted(standard)} "
-                "to avoid librosa resampling artefacts."
-            )
-        return v
+        return _validate_standard_sample_rate(v)
 
 
 # ── ASR Fine-tuning ─────────────────────────────────────────────────────────
+
 
 class ASRConfig(BaseTrainConfig):
     """
@@ -214,34 +276,39 @@ class ASRConfig(BaseTrainConfig):
         default="openai/whisper-small",
         description=(
             "Whisper model size. "
-            "whisper-small=241.7M — approved exception (2026-03-02); "
-            "required because baseline transcripts were generated by whisper-small and "
+            "whisper-small=241.7M (largest; within 500M total). "
             "whisper-base (72.6M) cannot match its quality on Nabati dialect. "
-            "Do NOT use whisper-medium (248M) or larger — no exception covers those."
-        )
+            "Do NOT use whisper-medium (248M) or larger — total budget is 500M."
+        ),
     )
-    language:    str  = Field(default="ar",   description="Target language code for Whisper.")
-    max_audio_sec: int = Field(default=30,  ge=1, le=30,
-                                description="Whisper hard-coded limit is 30s. [1, 30]")
+    language: str = Field(default="ar", description="Target language code for Whisper.")
+    max_audio_sec: int = Field(
+        default=30, ge=1, le=30, description="Whisper hard-coded limit is 30s. [1, 30]"
+    )
 
     # CER and WER thresholds — if eval exceeds these, training is likely diverging
     cer_warn_threshold: float = Field(
-        default=0.5, ge=0.0, le=1.0,
-        description="Log a warning if val CER exceeds this. [0, 1]"
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Log a warning if val CER exceeds this. [0, 1]",
     )
     wer_warn_threshold: float = Field(
-        default=0.8, ge=0.0, le=1.0,
-        description="Log a warning if val WER exceeds this. [0, 1]"
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Log a warning if val WER exceeds this. [0, 1]",
     )
 
 
 # ── Convenience defaults ─────────────────────────────────────────────────────
 
 DATA_PATHS = dict(
-    train_jsonl = Path("data/processed/train.jsonl"),
-    val_jsonl   = Path("data/processed/val.jsonl"),
-    test_jsonl  = Path("data/processed/test.jsonl"),
+    train_jsonl=Path("data/processed/train.jsonl"),
+    val_jsonl=Path("data/processed/val.jsonl"),
+    test_jsonl=Path("data/processed/test.jsonl"),
 )
+
 
 def mbert_genre_config() -> TextClassifierConfig:
     return TextClassifierConfig(
@@ -251,43 +318,46 @@ def mbert_genre_config() -> TextClassifierConfig:
         **DATA_PATHS,
     )
 
+
 def arapoem_genre_config() -> TextClassifierConfig:
     return TextClassifierConfig(
         model_name="faisalq/bert-base-arapoembert",
         task="genre",
-        max_seq_len=32,          # AraPoemBERT hard limit: max_position_embeddings=32
+        max_seq_len=32,  # AraPoemBERT hard limit: max_position_embeddings=32
         epochs=20,
         patience=8,
         learning_rate=3e-5,
         discriminative_lr_decay=0.9,
-        gradual_unfreeze_epochs=1,   # 1 layer/epoch → all 10 BERT layers active by epoch 10
-        grad_accum_steps=4,          # effective batch = 16×4 = 64 (SSL lab technique)
-        use_focal_loss=False,        # Run 3: class weights alone — focal+weights double-penalise
+        gradual_unfreeze_epochs=1,  # 1 layer/epoch → all 10 BERT layers active by epoch 10
+        grad_accum_steps=4,  # effective batch = 16×4 = 64
+        use_focal_loss=False,
         output_dir=Path("outputs/models/arapoem_genre"),
         **DATA_PATHS,
     )
+
 
 def arapoem_emotion_config() -> TextClassifierConfig:
     return TextClassifierConfig(
         model_name="faisalq/bert-base-arapoembert",
         task="emotion_text",
-        max_seq_len=32,          # AraPoemBERT hard limit: max_position_embeddings=32
+        max_seq_len=32,  # AraPoemBERT hard limit: max_position_embeddings=32
         epochs=20,
         patience=8,
         learning_rate=3e-5,
         discriminative_lr_decay=0.9,
         gradual_unfreeze_epochs=1,
         grad_accum_steps=4,
-        use_focal_loss=False,        # class weights alone
+        use_focal_loss=False,  # class weights alone
         output_dir=Path("outputs/models/arapoem_emotion"),
         **DATA_PATHS,
     )
+
 
 def audio_cnn_config() -> AudioCNNConfig:
     return AudioCNNConfig(
         output_dir=Path("outputs/models/audio_cnn"),
         # CNN is trained from scratch — needs much higher LR than BERT fine-tuning
-        learning_rate=1e-3,      # standard for CNN from scratch (BERT uses 2e-5)
+        learning_rate=1e-3,  # standard for CNN from scratch (BERT uses 2e-5)
         batch_size=32,
         epochs=30,
         patience=10,
@@ -298,6 +368,7 @@ def audio_cnn_config() -> AudioCNNConfig:
 
 
 # ── Arousal MLP ──────────────────────────────────────────────────────────────
+
 
 class ArousalConfig(BaseTrainConfig):
     """
@@ -321,30 +392,33 @@ class ArousalConfig(BaseTrainConfig):
 
     task: Literal["arousal"] = Field(
         default="arousal",
-        description="Arousal MLP always predicts 3-class arousal (Low/Medium/High)."
+        description="Arousal MLP always predicts 3-class arousal (Low/Medium/High).",
     )
 
     # ── Audio preprocessing ──────────────────────────────────────────────────
-    sample_rate:    int   = Field(default=16000, ge=8000, le=48000)
-    max_audio_sec:  int   = Field(default=30,    ge=1,    le=30)
-    n_mels:         int   = Field(default=128,   ge=32,   le=256)
-    n_mfcc:         int   = Field(default=13,    ge=8,    le=40,
-                                   description="Number of MFCC coefficients to extract. [8, 40]")
+    sample_rate: int = Field(default=16000, ge=8000, le=48000)
+    max_audio_sec: int = Field(default=30, ge=1, le=30)
+    n_mels: int = Field(default=128, ge=32, le=256)
+    n_mfcc: int = Field(
+        default=13,
+        ge=8,
+        le=40,
+        description="Number of MFCC coefficients to extract. [8, 40]",
+    )
 
     # ── MLP architecture ─────────────────────────────────────────────────────
-    hidden_dim:     int   = Field(default=128,   ge=32,   le=512,
-                                   description="Hidden layer width. [32, 512]")
-    n_layers:       int   = Field(default=2,     ge=1,    le=6,
-                                   description="Number of hidden layers. [1, 6]")
-    dropout:        float = Field(default=0.3,   ge=0.0,  lt=1.0)
+    hidden_dim: int = Field(
+        default=128, ge=32, le=512, description="Hidden layer width. [32, 512]"
+    )
+    n_layers: int = Field(
+        default=2, ge=1, le=6, description="Number of hidden layers. [1, 6]"
+    )
+    dropout: float = Field(default=0.3, ge=0.0, lt=1.0)
 
     @field_validator("sample_rate")
     @classmethod
     def sample_rate_must_be_standard(cls, v: int) -> int:
-        standard = {8000, 16000, 22050, 44100, 48000}
-        if v not in standard:
-            raise ValueError(f"sample_rate={v} is non-standard. Use one of {sorted(standard)}")
-        return v
+        return _validate_standard_sample_rate(v)
 
 
 def arousal_config() -> ArousalConfig:

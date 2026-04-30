@@ -1,10 +1,18 @@
 from loguru import logger
 
 EMOTION_CLASSES = [
-    "Longing (Shawq)", "Delicate Love (Hub Raqeeq)", "Sorrow (Huzn)",
-    "Pride (Fakhr)", "Admiration (I'jab)", "Contemplation (Ta'ammul)",
-    "Disappointment (Khayba)", "Defiance (Tahaddi)", "Hope (Amal)",
-    "Compassion (Hanaan)", "Humor (Turfah)", "Neutral / Descriptive (Wasfi)"
+    "Longing (Shawq)",
+    "Delicate Love (Hub Raqeeq)",
+    "Sorrow (Huzn)",
+    "Pride (Fakhr)",
+    "Admiration (I'jab)",
+    "Contemplation (Ta'ammul)",
+    "Disappointment (Khayba)",
+    "Defiance (Tahaddi)",
+    "Hope (Amal)",
+    "Compassion (Hanaan)",
+    "Humor (Turfah)",
+    "Neutral / Descriptive (Wasfi)",
 ]
 
 # 8-genre taxonomy.
@@ -35,16 +43,16 @@ GENRE_CLASSES = [
 # Maps removed genre labels to their surviving merge targets.
 # encode_genre() applies this before label lookup.
 GENRE_MERGE_MAP: dict[str, str] = {
-    "Madih (Praise)":               "Fakhr (Pride & Honor)",
-    "I'tithar (Delicate Apology)":  "Ghazal (Delicate love)",
-    "Tareef (Humorous)":            "Hija (Satire & Social Critique)",
+    "Madih (Praise)": "Fakhr (Pride & Honor)",
+    "I'tithar (Delicate Apology)": "Ghazal (Delicate love)",
+    "Tareef (Humorous)": "Hija (Satire & Social Critique)",
 }
 
 EMOTION2ID = {label: idx for idx, label in enumerate(EMOTION_CLASSES)}
 ID2EMOTION = {idx: label for label, idx in EMOTION2ID.items()}
 
 GENRE2ID = {label: idx for idx, label in enumerate(GENRE_CLASSES)}
-ID2GENRE  = {idx: label for label, idx in GENRE2ID.items()}
+ID2GENRE = {idx: label for label, idx in GENRE2ID.items()}
 
 
 def encode_emotion(emotion_str: str) -> int:
@@ -68,7 +76,10 @@ def encode_genre(genre_str: str) -> int:
     genre_str = genre_str.strip()
     # Apply merge map (exact match, then partial)
     for old, new in GENRE_MERGE_MAP.items():
-        if genre_str.lower() == old.lower() or genre_str.lower().split(" ")[0] == old.lower().split(" ")[0]:
+        if (
+            genre_str.lower() == old.lower()
+            or genre_str.lower().split(" ")[0] == old.lower().split(" ")[0]
+        ):
             genre_str = new
             break
     g = genre_str.lower()
@@ -83,7 +94,10 @@ def merge_genre_label(genre_str: str) -> str:
     """Returns the canonical (post-merge) genre string for a raw genre_en value."""
     genre_str = genre_str.strip()
     for old, new in GENRE_MERGE_MAP.items():
-        if genre_str.lower() == old.lower() or genre_str.lower().split(" ")[0] == old.lower().split(" ")[0]:
+        if (
+            genre_str.lower() == old.lower()
+            or genre_str.lower().split(" ")[0] == old.lower().split(" ")[0]
+        ):
             return new
     return genre_str
 
@@ -98,9 +112,9 @@ def merge_genre_label(genre_str: str) -> str:
 EMOTION_MERGE_PROFILES: dict[str, dict[str, str]] = {
     "none": {},
     "rare_merge_v1": {
-        "Longing":    "Sorrow (Huzn)",
+        "Longing": "Sorrow (Huzn)",
         "Compassion": "Delicate Love (Hub Raqeeq)",
-        "Humor":      "Neutral / Descriptive (Wasfi)",
+        "Humor": "Neutral / Descriptive (Wasfi)",
     },
 }
 
@@ -145,7 +159,9 @@ def encode_emotion_with_profile(emotion_str: str, profile: str = "none") -> int:
     for i, label in enumerate(merged_classes):
         if label.lower() == merged_lower or merged_lower.split(" ")[0] in label.lower():
             return i
-    logger.error(f"Unknown emotion after merge ({profile!r}): {emotion_str!r} -> {merged!r}")
+    logger.error(
+        f"Unknown emotion after merge ({profile!r}): {emotion_str!r} -> {merged!r}"
+    )
     return -1
 
 
@@ -208,6 +224,7 @@ GENRE_EXPECTED_EMOTIONS: dict[str, list[str]] = {
     ],
 }
 
+
 # Merge-profile-aware version: returns expected emotions under a given merge profile
 def get_genre_expected_emotions(genre: str, profile: str = "none") -> list[str]:
     """
@@ -227,7 +244,12 @@ def get_genre_expected_emotions(genre: str, profile: str = "none") -> list[str]:
 
 if __name__ == "__main__":
     logger.add("logs/labels.log", rotation="10 MB")
-    for g in ["Madih (Praise)", "I'tithar (Delicate Apology)", "Tareef (Humorous)",
-              "Ghazal (Delicate love)", "Hija (Satire & Social Critique)"]:
+    for g in [
+        "Madih (Praise)",
+        "I'tithar (Delicate Apology)",
+        "Tareef (Humorous)",
+        "Ghazal (Delicate love)",
+        "Hija (Satire & Social Critique)",
+    ]:
         idx = encode_genre(g)
         logger.info(f"'{g}' → id={idx} → '{ID2GENRE.get(idx)}'")

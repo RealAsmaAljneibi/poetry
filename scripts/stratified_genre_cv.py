@@ -29,25 +29,28 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
-import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from sklearn.metrics import f1_score, classification_report
+from sklearn.metrics import f1_score
 from sklearn.model_selection import StratifiedKFold
 from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.data.labels import GENRE_CLASSES, encode_genre, ID2GENRE
+from src.data.labels import GENRE_CLASSES, encode_genre
 from src.training.trainer import (
-    get_optimizer, get_scheduler, set_seed,
+    get_optimizer,
+    get_scheduler,
+    set_seed,
 )
 
 
 class SimpleEarlyStopper:
     """Minimal early stopper for CV folds (no checkpoint saving needed)."""
+
     def __init__(self, patience: int):
         self.patience = patience
         self.counter = 0
@@ -63,6 +66,7 @@ class SimpleEarlyStopper:
 
 
 # ── Text Dataset for CV ────────────────────────────────────────────────────
+
 
 class NabatiTextDatasetCV(Dataset):
     """
@@ -98,7 +102,6 @@ class NabatiTextDatasetCV(Dataset):
         for pid in poem_clips:
             poem_clips[pid].sort(key=lambda r: r.get("start", 0))
 
-        # Build context-windowed samples
         skipped = 0
         half = context_window // 2
 
@@ -131,15 +134,16 @@ class NabatiTextDatasetCV(Dataset):
                     text = text_i
 
                 poem_id_str = pid + "|" + rec.get("poet_en", "")
-                self.processed_samples.append({
-                    "text": text,
-                    "label": label_id,
-                    "poem_id": poem_id_str,
-                })
+                self.processed_samples.append(
+                    {
+                        "text": text,
+                        "label": label_id,
+                        "poem_id": poem_id_str,
+                    }
+                )
 
         logger.debug(
-            f"CV Dataset: {len(self.processed_samples)} samples "
-            f"(skipped {skipped})"
+            f"CV Dataset: {len(self.processed_samples)} samples (skipped {skipped})"
         )
 
     def __len__(self) -> int:
@@ -164,8 +168,15 @@ class NabatiTextDatasetCV(Dataset):
 
 # ── Training and Evaluation ────────────────────────────────────────────────
 
+
 def train_epoch(
-    model, loader, optimizer, scheduler, criterion, device, log_every: int = 100,
+    model,
+    loader,
+    optimizer,
+    scheduler,
+    criterion,
+    device,
+    log_every: int = 100,
 ) -> tuple[float, float]:
     """Train for one epoch. Returns (avg_loss, accuracy)."""
     model.train()
@@ -196,8 +207,8 @@ def train_epoch(
 
         if (i + 1) % log_every == 0:
             logger.debug(
-                f"Batch {i+1}/{len(loader)}: loss={loss.item():.4f}, "
-                f"acc={n_correct/n_total:.4f}"
+                f"Batch {i + 1}/{len(loader)}: loss={loss.item():.4f}, "
+                f"acc={n_correct / n_total:.4f}"
             )
 
     train_loss = total_loss / max(n_batches, 1)
@@ -206,7 +217,10 @@ def train_epoch(
 
 
 def eval_epoch(
-    model, loader, criterion, device,
+    model,
+    loader,
+    criterion,
+    device,
 ) -> tuple[float, float, list, list, list]:
     """Evaluate for one epoch. Returns (loss, f1, preds, true_labels, poem_ids)."""
     model.eval()
@@ -252,19 +266,17 @@ def poem_level_eval(
 
     poem_pred_list, poem_true_list = [], []
     for pid in poem_preds:
-        # Majority vote across clips
         votes = poem_preds[pid]
         pred = max(set(votes), key=votes.count)
         poem_pred_list.append(pred)
         poem_true_list.append(poem_labels[pid])
 
-    poem_f1 = f1_score(
-        poem_true_list, poem_pred_list, average="macro", zero_division=0
-    )
+    poem_f1 = f1_score(poem_true_list, poem_pred_list, average="macro", zero_division=0)
     return poem_f1
 
 
 # ── Main CV Loop ───────────────────────────────────────────────────────────
+
 
 def main():
     set_seed(42)
@@ -274,7 +286,9 @@ def main():
     logger.info("=" * 80)
 
     # ── Load full dataset ──────────────────────────────────────────────────────
-    dataset_path = Path(__file__).parent.parent / "data" / "processed" / "master_dataset.jsonl"
+    dataset_path = (
+        Path(__file__).parent.parent / "data" / "processed" / "master_dataset.jsonl"
+    )
     logger.info(f"Loading dataset from {dataset_path}")
 
     all_samples = []
@@ -285,7 +299,6 @@ def main():
 
     logger.info(f"Loaded {len(all_samples)} clips")
 
-    # Group by poet
     poet_groups: dict[str, list[dict]] = defaultdict(list)
     for sample in all_samples:
         poet = sample.get("poet_en", "unknown")
@@ -303,9 +316,7 @@ def main():
     # Create stratification targets: genre distribution per poet
     poet_genre_targets = []
     for poet in poets:
-        genre_ids = [
-            encode_genre(s.get("genre_en", "")) for s in poet_groups[poet]
-        ]
+        genre_ids = [encode_genre(s.get("genre_en", "")) for s in poet_groups[poet]]
         # Use the most common genre as the stratification target
         target = max(set(genre_ids), key=genre_ids.count) if genre_ids else 0
         poet_genre_targets.append(target)
@@ -317,7 +328,7 @@ def main():
     # bert-base-arapoembert has max_position_embeddings=32 — too short for window=5 context.
     # bert-base-arabertv2 supports 512 tokens and works correctly with max_seq_len=128.
     model_name = "aubmindlab/bert-base-arabertv2"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, local_files_only=True)
     logger.info(f"Loaded tokenizer: {model_name}")
 
     # ── CV Folds ───────────────────────────────────────────────────────────────
@@ -326,9 +337,9 @@ def main():
     for fold_idx, (train_poet_indices, test_poet_indices) in enumerate(
         skf.split(poets, poet_genre_targets)
     ):
-        logger.info(f"\n{'='*80}")
+        logger.info(f"\n{'=' * 80}")
         logger.info(f"FOLD {fold_idx + 1}/{n_splits}")
-        logger.info(f"{'='*80}")
+        logger.info(f"{'=' * 80}")
 
         train_poets = [poets[i] for i in train_poet_indices]
         test_poets = [poets[i] for i in test_poet_indices]
@@ -336,32 +347,25 @@ def main():
         logger.info(f"Train poets ({len(train_poets)}): {train_poets}")
         logger.info(f"Test poets ({len(test_poets)}): {test_poets}")
 
-        # Collect train/test clips
-        train_samples = [
-            s for poet in train_poets for s in poet_groups[poet]
-        ]
-        test_samples = [
-            s for poet in test_poets for s in poet_groups[poet]
-        ]
+        train_samples = [s for poet in train_poets for s in poet_groups[poet]]
+        test_samples = [s for poet in test_poets for s in poet_groups[poet]]
 
-        logger.info(f"Train clips: {len(train_samples)}, Test clips: {len(test_samples)}")
+        logger.info(
+            f"Train clips: {len(train_samples)}, Test clips: {len(test_samples)}"
+        )
 
         # Create datasets with context_window=5 (matching GENRE-R4)
-        train_dataset = NabatiTextDatasetCV(
-            train_samples, tokenizer, context_window=5
-        )
-        test_dataset = NabatiTextDatasetCV(
-            test_samples, tokenizer, context_window=5
-        )
+        train_dataset = NabatiTextDatasetCV(train_samples, tokenizer, context_window=5)
+        test_dataset = NabatiTextDatasetCV(test_samples, tokenizer, context_window=5)
 
         train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
-        # ── Load fresh AraPoemBERT ────────────────────────────────────────────
+        # ── Load fresh ArabertV2 ─────────────────────────────────────────────
         model = AutoModelForSequenceClassification.from_pretrained(
             model_name,
             num_labels=len(GENRE_CLASSES),
-            local_files_only=False,
+            local_files_only=True,
         )
         model = model.to(device)
         logger.info(f"Loaded model: {model_name}")
@@ -383,9 +387,7 @@ def main():
             model, base_lr=2e-5, weight_decay=0.01, discriminative_lr_decay=0.9
         )
         total_steps = len(train_loader) * 10  # 10 epochs
-        scheduler = get_scheduler(
-            optimizer, total_steps=total_steps, warmup_ratio=0.1
-        )
+        scheduler = get_scheduler(optimizer, total_steps=total_steps, warmup_ratio=0.1)
 
         early_stopper = SimpleEarlyStopper(patience=3)
         best_val_f1 = 0.0
@@ -401,7 +403,7 @@ def main():
             )
 
             logger.info(
-                f"Epoch {epoch+1}/10 | "
+                f"Epoch {epoch + 1}/10 | "
                 f"train_loss={train_loss:.4f} train_acc={train_acc:.4f} | "
                 f"val_loss={val_loss:.4f} val_f1={val_f1:.4f}"
             )
@@ -413,7 +415,7 @@ def main():
                 early_stopper.step()
 
             if early_stopper.should_stop():
-                logger.info(f"Early stopping at epoch {epoch+1}")
+                logger.info(f"Early stopping at epoch {epoch + 1}")
                 break
 
         # ── Final Evaluation ───────────────────────────────────────────────────
@@ -424,26 +426,27 @@ def main():
 
         poem_f1 = poem_level_eval(clip_preds, clip_true, clip_poem_ids)
 
-        logger.info(f"Fold {fold_idx+1} Results:")
+        logger.info(f"Fold {fold_idx + 1} Results:")
         logger.info(f"  Clip-level F1:  {val_f1:.4f}")
         logger.info(f"  Poem-level F1:  {poem_f1:.4f}")
 
-        fold_results.append({
-            "fold": fold_idx + 1,
-            "train_poets": train_poets,
-            "test_poets": test_poets,
-            "clip_f1": float(val_f1),
-            "poem_f1": float(poem_f1),
-        })
+        fold_results.append(
+            {
+                "fold": fold_idx + 1,
+                "train_poets": train_poets,
+                "test_poets": test_poets,
+                "clip_f1": float(val_f1),
+                "poem_f1": float(poem_f1),
+            }
+        )
 
-        # Cleanup
         del model, optimizer, scheduler, criterion
         torch.cuda.empty_cache()
 
     # ── Summary Statistics ─────────────────────────────────────────────────────
-    logger.info(f"\n{'='*80}")
+    logger.info(f"\n{'=' * 80}")
     logger.info("CROSS-VALIDATION SUMMARY")
-    logger.info(f"{'='*80}")
+    logger.info(f"{'=' * 80}")
 
     clip_f1_scores = [r["clip_f1"] for r in fold_results]
     poem_f1_scores = [r["poem_f1"] for r in fold_results]

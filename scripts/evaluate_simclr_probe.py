@@ -12,9 +12,6 @@ A linear probe is a standard evaluation technique in self-supervised learning:
 This isolates the quality of the learned representations. High linear probe performance
 indicates that the encoder has learned useful features without labels.
 
-Course context: Week 4 SSL lab — "Evaluate learned representations by how well a
-simple downstream model can use them."
-
 Usage:
     uv run python scripts/evaluate_simclr_probe.py
 """
@@ -29,12 +26,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from loguru import logger
+from sklearn.metrics import f1_score
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.models.audio_cnn import Emotion1DCNN
 from src.data.dataset import NabatiDataset
 from src.training.trainer import set_seed
-from sklearn.metrics import f1_score as sklearn_f1_score
 
 
 # ── Hyper-parameters ──────────────────────────────────────────────────────────
@@ -54,31 +51,20 @@ NUM_CLASSES = 12
 
 # ── Linear Probe Head ──────────────────────────────────────────────────────────
 
+
 class LinearProbe(nn.Module):
-    """
-    Simple linear classifier on top of a frozen encoder.
-
-    Takes 512-dim embeddings and outputs 12-class logits.
-    """
-
     def __init__(self, input_dim: int = 512, num_classes: int = 12):
         super().__init__()
         self.head = nn.Linear(input_dim, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (B, 512) embeddings from encoder
-        Returns:
-            (B, num_classes) logits
-        """
         return self.head(x)
 
 
 # ── Collate function ──────────────────────────────────────────────────────────
 
+
 def collate_probe(batch: list[dict]) -> dict:
-    """Pad audio tensors to batch max time."""
     max_T = max(item["audio_tensor"].shape[-1] for item in batch)
 
     audio_batch = []
@@ -99,6 +85,7 @@ def collate_probe(batch: list[dict]) -> dict:
 
 # ── Training loop ──────────────────────────────────────────────────────────────
 
+
 def train_probe(
     model: nn.Module,
     encoder: nn.Module,
@@ -109,22 +96,6 @@ def train_probe(
     lr: float = LR,
     patience: int = PATIENCE,
 ) -> dict[str, float]:
-    """
-    Train the linear probe head while the encoder is frozen.
-
-    Args:
-        model: LinearProbe instance
-        encoder: Frozen encoder (pre-trained or random)
-        train_loader: Training data
-        val_loader: Validation data
-        device: torch.device
-        epochs: Number of epochs
-        lr: Learning rate
-        patience: Early stopping patience
-
-    Returns:
-        Dict with best_val_loss, best_epoch, final metrics
-    """
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
     criterion = nn.CrossEntropyLoss()
 
@@ -144,12 +115,10 @@ def train_probe(
             audio = batch["audio_tensor"].to(device)
             emotion_ids = batch["emotion_id"].to(device)
 
-            # Encoder frozen: get embeddings
             with torch.no_grad():
-                embeddings = encoder.embed(audio)  # (B, 512)
+                embeddings = encoder.embed(audio)
 
-            # Probe head forward
-            logits = model(embeddings)  # (B, 12)
+            logits = model(embeddings)
             loss = criterion(logits, emotion_ids)
 
             optimizer.zero_grad()
@@ -186,7 +155,9 @@ def train_probe(
                 total_val_samples += emotion_ids.shape[0]
 
         avg_val_loss = total_val_loss / val_steps
-        val_acc = total_val_correct / total_val_samples if total_val_samples > 0 else 0.0
+        val_acc = (
+            total_val_correct / total_val_samples if total_val_samples > 0 else 0.0
+        )
 
         history["train_loss"].append(avg_train_loss)
         history["val_loss"].append(avg_val_loss)
@@ -202,17 +173,17 @@ def train_probe(
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
             logger.info(
-                f"Epoch {epoch+1:3d}/{epochs} | "
+                f"Epoch {epoch + 1:3d}/{epochs} | "
                 f"train_loss={avg_train_loss:.4f} | "
                 f"val_loss={avg_val_loss:.4f} | "
                 f"val_acc={val_acc:.4f}"
             )
 
         if epochs_no_improve >= patience:
-            logger.info(f"Early stopping at epoch {epoch+1} (patience={patience})")
+            logger.info(f"Early stopping at epoch {epoch + 1} (patience={patience})")
             break
 
-    logger.info(f"Best val_loss={best_val_loss:.4f} at epoch {best_epoch+1}")
+    logger.info(f"Best val_loss={best_val_loss:.4f} at epoch {best_epoch + 1}")
 
     return {
         "best_val_loss": best_val_loss,
@@ -227,12 +198,6 @@ def evaluate_probe(
     test_loader: DataLoader,
     device: torch.device,
 ) -> dict[str, float]:
-    """
-    Evaluate the probe on test set.
-
-    Returns:
-        Dict with accuracy and macro F1 (clip-level)
-    """
     model.eval()
     encoder.eval()
 
@@ -254,12 +219,7 @@ def evaluate_probe(
     all_preds = np.concatenate(all_preds)
     all_targets = np.concatenate(all_targets)
 
-    # Clip-level accuracy
     accuracy = np.mean(all_preds == all_targets)
-
-    # Macro F1 (clip-level, not poem-level for this evaluation)
-    from sklearn.metrics import f1_score
-
     macro_f1 = f1_score(all_targets, all_preds, average="macro", zero_division=0)
 
     return {
@@ -269,6 +229,7 @@ def evaluate_probe(
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 def main():
     logger.add("logs/evaluate_simclr_probe.log", rotation="10 MB")
@@ -339,21 +300,18 @@ def main():
         logger.info("Please run: uv run python scripts/pretrain_audio_simclr.py")
         return
 
-    # Load pre-trained encoder
     simclr_encoder = Emotion1DCNN(num_classes=12).to(device)
     simclr_encoder.load_state_dict(torch.load(encoder_path, map_location=device))
     for param in simclr_encoder.parameters():
-        param.requires_grad = False  # Freeze
+        param.requires_grad = False
     logger.info(f"Loaded pre-trained encoder from {encoder_path}")
 
-    # Train probe on pre-trained encoder
     simclr_probe = LinearProbe(ENCODER_DIM, NUM_CLASSES).to(device)
     logger.info("Training linear probe on frozen SimCLR encoder...")
     simclr_train_info = train_probe(
         simclr_probe, simclr_encoder, train_loader, val_loader, device
     )
 
-    # Evaluate on test set
     simclr_results = evaluate_probe(simclr_probe, simclr_encoder, test_loader, device)
     simclr_results.update(simclr_train_info)
     logger.success(
@@ -367,20 +325,17 @@ def main():
     logger.info("Experiment 2: Random encoder baseline + linear probe")
     logger.info("=" * 70)
 
-    # Create a fresh random encoder (never trained)
     random_encoder = Emotion1DCNN(num_classes=12).to(device)
     for param in random_encoder.parameters():
-        param.requires_grad = False  # Freeze
+        param.requires_grad = False
     logger.info("Created random encoder (all weights initialized, frozen)")
 
-    # Train probe on random encoder
     random_probe = LinearProbe(ENCODER_DIM, NUM_CLASSES).to(device)
     logger.info("Training linear probe on frozen random encoder...")
     random_train_info = train_probe(
         random_probe, random_encoder, train_loader, val_loader, device
     )
 
-    # Evaluate on test set
     random_results = evaluate_probe(random_probe, random_encoder, test_loader, device)
     random_results.update(random_train_info)
     logger.success(
@@ -403,7 +358,9 @@ def main():
     f1_gain = simclr_f1 - random_f1
 
     logger.info(f"SimCLR Probe  | Accuracy={simclr_acc:.4f}, Macro F1={simclr_f1:.4f}")
-    logger.info(f"Random Baseline | Accuracy={random_acc:.4f}, Macro F1={random_f1:.4f}")
+    logger.info(
+        f"Random Baseline | Accuracy={random_acc:.4f}, Macro F1={random_f1:.4f}"
+    )
     logger.info(f"Gain (SimCLR - Random) | Accuracy={acc_gain:+.4f}, F1={f1_gain:+.4f}")
 
     if acc_gain > 0 and f1_gain > 0:

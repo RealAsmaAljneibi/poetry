@@ -51,7 +51,7 @@ _HAMZA_MAP = str.maketrans(
 # Additional normalization used only by Soft-CER.
 _SOFT_ONLY_MAP = str.maketrans(
     {
-        "\u0649": "\u064A",  # ى → ي
+        "\u0649": "\u064a",  # ى → ي
         "\u0629": "\u0647",  # ة → ه
         "\u0624": "\u0648",  # ؤ → و
     }
@@ -60,8 +60,8 @@ _SOFT_ONLY_MAP = str.maketrans(
 # Multi-char → single canonical char (applied before char-level comparison)
 # تش (kashkasha) → چ  |  تس (kasksaka) → پ (reused as placeholder)
 _MULTICHAR_SUBS: list[tuple[str, str]] = [
-    ("\u062A\u0634", "\u0686"),  # تش → چ
-    ("\u062A\u0633", "\u067E"),  # تس → پ  (Najdi kasksaka placeholder)
+    ("\u062a\u0634", "\u0686"),  # تش → چ
+    ("\u062a\u0633", "\u067e"),  # تس → پ  (Najdi kasksaka placeholder)
 ]
 
 
@@ -94,6 +94,7 @@ def _preprocess_soft(text: str) -> str:
 
 # ── Soft-CER: research-informed default cost table ───────────────────────────
 
+
 def _build_cost_table() -> dict[tuple[str, str], float]:
     """
     Bidirectional substitution cost table for Gulf-Arabic-weighted CER.
@@ -105,32 +106,28 @@ def _build_cost_table() -> dict[tuple[str, str], float]:
     """
     pairs: list[tuple[str, str, float]] = [
         # Velar/uvular confusions
-        ("\u062E", "\u063A", 0.20),   # خ ↔ غ
-        ("\u063A", "\u0642", 0.20),   # غ ↔ ق  (Kuwaiti feature)
-        ("\u0642", "\u0621", 0.25),   # ق ↔ ء  (urban Gulf qaf→glottal)
-        ("\u0642", "\u06AF", 0.12),   # ق ↔ گ  (Bedouin/rural qaf→g)
-
+        ("\u062e", "\u063a", 0.20),  # خ ↔ غ
+        ("\u063a", "\u0642", 0.20),  # غ ↔ ق  (Kuwaiti feature)
+        ("\u0642", "\u0621", 0.25),  # ق ↔ ء  (urban Gulf qaf→glottal)
+        ("\u0642", "\u06af", 0.12),  # ق ↔ گ  (Bedouin/rural qaf→g)
         # Emphatic pairs
-        ("\u062A", "\u0637", 0.15),   # ت ↔ ط  (plain/emphatic alveolar)
-        ("\u0636", "\u0638", 0.15),   # ض ↔ ظ  (emphatic stop/fricative merger)
-        ("\u0636", "\u0630", 0.50),   # ض ↔ ذ  (keep conservative unless learned)
-
+        ("\u062a", "\u0637", 0.15),  # ت ↔ ط  (plain/emphatic alveolar)
+        ("\u0636", "\u0638", 0.15),  # ض ↔ ظ  (emphatic stop/fricative merger)
+        ("\u0636", "\u0630", 0.50),  # ض ↔ ذ  (keep conservative unless learned)
         # Interdental/sibilant mergers
-        ("\u062B", "\u0633", 0.20),   # ث ↔ س  (Gulf merger)
-        ("\u0630", "\u0632", 0.20),   # ذ ↔ ز  (voiced interdental/sibilant)
-        ("\u062B", "\u062A", 0.20),   # ث ↔ ت  (fronting in Gulf varieties)
-        ("\u0633", "\u0634", 0.40),   # س ↔ ش  (keep context-sensitive and conservative)
-        ("\u0635", "\u0633", 0.20),   # ص ↔ س  (de-emphasis)
-        ("\u0635", "\u0632", 0.60),   # ص ↔ ز  (avoid over-credit)
-
+        ("\u062b", "\u0633", 0.20),  # ث ↔ س  (Gulf merger)
+        ("\u0630", "\u0632", 0.20),  # ذ ↔ ز  (voiced interdental/sibilant)
+        ("\u062b", "\u062a", 0.20),  # ث ↔ ت  (fronting in Gulf varieties)
+        ("\u0633", "\u0634", 0.40),  # س ↔ ش  (keep context-sensitive and conservative)
+        ("\u0635", "\u0633", 0.20),  # ص ↔ س  (de-emphasis)
+        ("\u0635", "\u0632", 0.60),  # ص ↔ ز  (avoid over-credit)
         # Palatal/affricate shifts
-        ("\u062C", "\u064A", 0.10),   # ج ↔ ي
-        ("\u0643", "\u0686", 0.12),   # ك ↔ چ
-        ("\u0643", "\u067E", 0.20),   # ك ↔ پ  (kasksaka placeholder)
-        ("\u0643", "\u062C", 0.15),   # ك ↔ ج  (feminine 2nd person: لك↔لج)
-
+        ("\u062c", "\u064a", 0.10),  # ج ↔ ي
+        ("\u0643", "\u0686", 0.12),  # ك ↔ چ
+        ("\u0643", "\u067e", 0.20),  # ك ↔ پ  (kasksaka placeholder)
+        ("\u0643", "\u062c", 0.15),  # ك ↔ ج  (feminine 2nd person: لك↔لج)
         # Nasal/contextual
-        ("\u0646", "\u0645", 0.30),   # ن ↔ م  (nasal assimilation before labials)
+        ("\u0646", "\u0645", 0.30),  # ن ↔ م  (nasal assimilation before labials)
     ]
 
     table: dict[tuple[str, str], float] = {}
@@ -144,6 +141,7 @@ SOFT_CER_COST_TABLE: dict[tuple[str, str], float] = _build_cost_table()
 
 
 # ── Weighted Levenshtein ─────────────────────────────────────────────────────
+
 
 def _weighted_levenshtein(
     s1: str,
@@ -170,14 +168,15 @@ def _weighted_levenshtein(
             else:
                 sub_cost = cost_table.get((c1, c2), 1.0)
                 dp[i][j] = min(
-                    dp[i - 1][j] + 1.0,           # deletion
-                    dp[i][j - 1] + 1.0,           # insertion
+                    dp[i - 1][j] + 1.0,  # deletion
+                    dp[i][j - 1] + 1.0,  # insertion
                     dp[i - 1][j - 1] + sub_cost,  # substitution
                 )
     return dp[m][n]
 
 
 # ── Public ASR metrics ────────────────────────────────────────────────────────
+
 
 def soft_cer(
     hypothesis: str,
@@ -198,7 +197,7 @@ def soft_cer(
     if cost_table is None:
         cost_table = SOFT_CER_COST_TABLE
     hyp_chars = _preprocess_soft(hypothesis).replace(" ", "")
-    ref_chars  = _preprocess_soft(reference).replace(" ", "")
+    ref_chars = _preprocess_soft(reference).replace(" ", "")
     if not ref_chars:
         return 0.0 if not hyp_chars else 1.0
     dist = _weighted_levenshtein(hyp_chars, ref_chars, cost_table)
@@ -211,7 +210,8 @@ def standard_cer(hypothesis: str, reference: str) -> float:
 
 
 def _word_alignment_counts(
-    hypothesis: str, reference: str,
+    hypothesis: str,
+    reference: str,
 ) -> tuple[int, int, int, int]:
     """
     Word-level DP alignment returning (hits, substitutions, deletions, insertions).
@@ -272,25 +272,24 @@ def standard_wer(hypothesis: str, reference: str) -> float:
 
 # Short key → canonical label (must match labels.py EMOTION_CLASSES exactly)
 _E: dict[str, str] = {
-    "longing":       "Longing (Shawq)",
-    "love":          "Delicate Love (Hub Raqeeq)",
-    "sorrow":        "Sorrow (Huzn)",
-    "pride":         "Pride (Fakhr)",
-    "admiration":    "Admiration (I'jab)",
+    "longing": "Longing (Shawq)",
+    "love": "Delicate Love (Hub Raqeeq)",
+    "sorrow": "Sorrow (Huzn)",
+    "pride": "Pride (Fakhr)",
+    "admiration": "Admiration (I'jab)",
     "contemplation": "Contemplation (Ta'ammul)",
-    "disappointment":"Disappointment (Khayba)",
-    "defiance":      "Defiance (Tahaddi)",
-    "hope":          "Hope (Amal)",
-    "compassion":    "Compassion (Hanaan)",
-    "humor":         "Humor (Turfah)",
-    "neutral":       "Neutral / Descriptive (Wasfi)",
+    "disappointment": "Disappointment (Khayba)",
+    "defiance": "Defiance (Tahaddi)",
+    "hope": "Hope (Amal)",
+    "compassion": "Compassion (Hanaan)",
+    "humor": "Humor (Turfah)",
+    "neutral": "Neutral / Descriptive (Wasfi)",
 }
 _E_REV: dict[str, str] = {v: k for k, v in _E.items()}
 
 # Short-form prefix → canonical (for data that stores e.g. "Admiration" not "Admiration (I'jab)")
 _E_SHORT: dict[str, str] = {
-    canonical.split("(")[0].strip().lower(): canonical
-    for canonical in _E.values()
+    canonical.split("(")[0].strip().lower(): canonical for canonical in _E.values()
 }
 # Also add "neutral / descriptive" → neutral
 _E_SHORT["neutral / descriptive"] = "Neutral / Descriptive (Wasfi)"
@@ -324,17 +323,17 @@ def normalize_emotion(label) -> str:
 
 # Genre canonical normalization (handles case variants like "Ghazal (Delicate love)")
 _GENRE_CANONICAL: dict[str, str] = {
-    "Ghazal (Delicate Love)":                    "Ghazal (Delicate Love)",
-    "Fakhr (Pride & Honor)":                     "Fakhr (Pride & Honor)",
-    "Madih (Praise)":                            "Madih (Praise)",
-    "Ritha (Elegy & Lament)":                    "Ritha (Elegy & Lament)",
-    "Hikma (Wisdom، Philosophical & Reflection)":"Hikma (Wisdom، Philosophical & Reflection)",
-    "Wataniyya (Patriotic & National)":          "Wataniyya (Patriotic & National)",
-    "Hija (Satire & Social Critique)":           "Hija (Satire & Social Critique)",
-    "Badawa (Bedouin Life & Desert Heritage)":   "Badawa (Bedouin Life & Desert Heritage)",
-    "I'tithar (Delicate Apology)":               "I'tithar (Delicate Apology)",
-    "Tareef (Humorous)":                         "Tareef (Humorous)",
-    "Shajan (Sorrow / Regret)":                  "Shajan (Sorrow / Regret)",
+    "Ghazal (Delicate Love)": "Ghazal (Delicate Love)",
+    "Fakhr (Pride & Honor)": "Fakhr (Pride & Honor)",
+    "Madih (Praise)": "Madih (Praise)",
+    "Ritha (Elegy & Lament)": "Ritha (Elegy & Lament)",
+    "Hikma (Wisdom، Philosophical & Reflection)": "Hikma (Wisdom، Philosophical & Reflection)",
+    "Wataniyya (Patriotic & National)": "Wataniyya (Patriotic & National)",
+    "Hija (Satire & Social Critique)": "Hija (Satire & Social Critique)",
+    "Badawa (Bedouin Life & Desert Heritage)": "Badawa (Bedouin Life & Desert Heritage)",
+    "I'tithar (Delicate Apology)": "I'tithar (Delicate Apology)",
+    "Tareef (Humorous)": "Tareef (Humorous)",
+    "Shajan (Sorrow / Regret)": "Shajan (Sorrow / Regret)",
 }
 
 
@@ -361,29 +360,30 @@ def normalize_genre(label) -> str:
             return canonical
     return stripped
 
+
 # Adjacency edges for BFS distance calculation
 # (emotion_a, emotion_b) at distance = 1
 _EMOTION_EDGES: list[tuple[str, str]] = [
     # Cluster A — Melancholic/Longing
-    ("longing",       "sorrow"),
-    ("longing",       "love"),
-    ("sorrow",        "disappointment"),
-    ("compassion",    "longing"),
-    ("compassion",    "love"),
+    ("longing", "sorrow"),
+    ("longing", "love"),
+    ("sorrow", "disappointment"),
+    ("compassion", "longing"),
+    ("compassion", "love"),
     # Cluster B — Assertive/Powerful
-    ("pride",         "defiance"),
-    ("pride",         "hope"),
-    ("defiance",      "hope"),
+    ("pride", "defiance"),
+    ("pride", "hope"),
+    ("defiance", "hope"),
     # Cluster C — Gentle/Tender
-    ("admiration",    "love"),
-    ("humor",         "admiration"),
+    ("admiration", "love"),
+    ("humor", "admiration"),
     # Cluster D — Reflective/Neutral
     ("contemplation", "neutral"),
     # Cross-cluster bridges
-    ("sorrow",        "contemplation"),
-    ("hope",          "contemplation"),
-    ("admiration",    "hope"),
-    ("disappointment","compassion"),
+    ("sorrow", "contemplation"),
+    ("hope", "contemplation"),
+    ("admiration", "hope"),
+    ("disappointment", "compassion"),
 ]
 
 
@@ -438,45 +438,70 @@ def emotion_distance(emotion_a: str, emotion_b: str) -> int:
 # Primary + secondary expected emotions per genre (used for Tier 3 partial credit)
 GENRE_EXPECTED_EMOTIONS: dict[str, set[str]] = {
     "Ghazal (Delicate Love)": {
-        "Delicate Love (Hub Raqeeq)", "Longing (Shawq)", "Admiration (I'jab)",
-        "Compassion (Hanaan)", "Sorrow (Huzn)",
+        "Delicate Love (Hub Raqeeq)",
+        "Longing (Shawq)",
+        "Admiration (I'jab)",
+        "Compassion (Hanaan)",
+        "Sorrow (Huzn)",
     },
     "Fakhr (Pride & Honor)": {
-        "Pride (Fakhr)", "Defiance (Tahaddi)", "Hope (Amal)", "Admiration (I'jab)",
+        "Pride (Fakhr)",
+        "Defiance (Tahaddi)",
+        "Hope (Amal)",
+        "Admiration (I'jab)",
     },
     "Madih (Praise)": {
-        "Admiration (I'jab)", "Hope (Amal)", "Pride (Fakhr)",
+        "Admiration (I'jab)",
+        "Hope (Amal)",
+        "Pride (Fakhr)",
         "Delicate Love (Hub Raqeeq)",
     },
     "Ritha (Elegy & Lament)": {
-        "Sorrow (Huzn)", "Longing (Shawq)", "Disappointment (Khayba)",
+        "Sorrow (Huzn)",
+        "Longing (Shawq)",
+        "Disappointment (Khayba)",
         "Compassion (Hanaan)",
     },
     "Hikma (Wisdom، Philosophical & Reflection)": {
-        "Contemplation (Ta'ammul)", "Neutral / Descriptive (Wasfi)",
-        "Hope (Amal)", "Admiration (I'jab)",
+        "Contemplation (Ta'ammul)",
+        "Neutral / Descriptive (Wasfi)",
+        "Hope (Amal)",
+        "Admiration (I'jab)",
     },
     "Wataniyya (Patriotic & National)": {
-        "Pride (Fakhr)", "Hope (Amal)", "Defiance (Tahaddi)", "Admiration (I'jab)",
+        "Pride (Fakhr)",
+        "Hope (Amal)",
+        "Defiance (Tahaddi)",
+        "Admiration (I'jab)",
     },
     "Hija (Satire & Social Critique)": {
-        "Defiance (Tahaddi)", "Humor (Turfah)", "Disappointment (Khayba)",
+        "Defiance (Tahaddi)",
+        "Humor (Turfah)",
+        "Disappointment (Khayba)",
         "Admiration (I'jab)",
     },
     "Badawa (Bedouin Life & Desert Heritage)": {
-        "Longing (Shawq)", "Contemplation (Ta'ammul)",
-        "Neutral / Descriptive (Wasfi)", "Sorrow (Huzn)",
+        "Longing (Shawq)",
+        "Contemplation (Ta'ammul)",
+        "Neutral / Descriptive (Wasfi)",
+        "Sorrow (Huzn)",
     },
     "I'tithar (Delicate Apology)": {
-        "Compassion (Hanaan)", "Disappointment (Khayba)",
-        "Delicate Love (Hub Raqeeq)", "Sorrow (Huzn)",
+        "Compassion (Hanaan)",
+        "Disappointment (Khayba)",
+        "Delicate Love (Hub Raqeeq)",
+        "Sorrow (Huzn)",
     },
     "Tareef (Humorous)": {
-        "Humor (Turfah)", "Admiration (I'jab)",
-        "Neutral / Descriptive (Wasfi)", "Defiance (Tahaddi)",
+        "Humor (Turfah)",
+        "Admiration (I'jab)",
+        "Neutral / Descriptive (Wasfi)",
+        "Defiance (Tahaddi)",
     },
     "Shajan (Sorrow / Regret)": {
-        "Sorrow (Huzn)", "Disappointment (Khayba)", "Longing (Shawq)",
+        "Sorrow (Huzn)",
+        "Disappointment (Khayba)",
+        "Longing (Shawq)",
         "Compassion (Hanaan)",
     },
 }
@@ -486,10 +511,10 @@ _ALL_EMOTIONS: frozenset[str] = frozenset(_E.values())
 
 
 def emotion_partial_credit(
-    pred:      str,
+    pred: str,
     audio_ref: str,
-    text_ref:  str,
-    genre:     str,
+    text_ref: str,
+    genre: str,
 ) -> float:
     """
     5-tier partial-credit emotion score.
@@ -511,10 +536,10 @@ def emotion_partial_credit(
     genre     : genre of the poem (for Tier 3 plausibility check)
     """
     # Normalise all labels to canonical form (handles NaN, short labels, case)
-    pred_c      = normalize_emotion(pred)
+    pred_c = normalize_emotion(pred)
     audio_ref_c = normalize_emotion(audio_ref)
-    text_ref_c  = normalize_emotion(text_ref)
-    genre_c     = normalize_genre(genre)
+    text_ref_c = normalize_emotion(text_ref)
+    genre_c = normalize_genre(genre)
 
     if not pred_c:
         return 0.0
@@ -525,7 +550,7 @@ def emotion_partial_credit(
 
     # Tier 2 — cluster-adjacent
     d_audio = emotion_distance(pred_c, audio_ref_c)
-    d_text  = emotion_distance(pred_c, text_ref_c)
+    d_text = emotion_distance(pred_c, text_ref_c)
     if d_audio == 1 or d_text == 1:
         return 0.65
 
@@ -545,10 +570,10 @@ def emotion_partial_credit(
 
 
 def mean_emotion_partial_credit(
-    preds:      list[str],
+    preds: list[str],
     audio_refs: list[str],
-    text_refs:  list[str],
-    genres:     list[str],
+    text_refs: list[str],
+    genres: list[str],
 ) -> float:
     """Average emotion_partial_credit over a list of predictions."""
     if not preds:
@@ -562,11 +587,12 @@ def mean_emotion_partial_credit(
 
 # ── Graded nDCG for retrieval ─────────────────────────────────────────────────
 
+
 def graded_relevance(
-    result_genre:   str,
+    result_genre: str,
     result_emotion: str,
-    query_genre:    str,
-    query_emotion:  str,
+    query_genre: str,
+    query_emotion: str,
 ) -> int:
     """
     4-level relevance for graded nDCG.
@@ -579,7 +605,7 @@ def graded_relevance(
       0    Otherwise
     """
     same_genre = normalize_genre(result_genre) == normalize_genre(query_genre)
-    e_dist     = emotion_distance(result_emotion, query_emotion)
+    e_dist = emotion_distance(result_emotion, query_emotion)
 
     if same_genre and e_dist == 0:
         return 3
@@ -591,12 +617,12 @@ def graded_relevance(
 
 
 def graded_ndcg_at_k(
-    results:       list[dict],
-    query_genre:   str,
+    results: list[dict],
+    query_genre: str,
     query_emotion: str,
-    k:             int = 10,
-    genre_key:     str = "genre_en",
-    emotion_key:   str = "emotion_text",
+    k: int = 10,
+    genre_key: str = "genre_en",
+    emotion_key: str = "emotion_text",
 ) -> float:
     """
     Graded nDCG@K using 4-level relevance (0–3).
@@ -609,28 +635,28 @@ def graded_ndcg_at_k(
     rels: list[int] = []
     for i, r in enumerate(topk):
         rel = graded_relevance(
-            r.get(genre_key, ""), r.get(emotion_key, ""),
-            query_genre, query_emotion,
+            r.get(genre_key, ""),
+            r.get(emotion_key, ""),
+            query_genre,
+            query_emotion,
         )
         rels.append(rel)
-        dcg += (2 ** rel - 1) / math.log2(i + 2)
+        dcg += (2**rel - 1) / math.log2(i + 2)
 
     # IDCG: ideal ordering of the same relevance scores
     ideal_rels = sorted(rels, reverse=True)
-    idcg = sum(
-        (2 ** rel - 1) / math.log2(i + 2)
-        for i, rel in enumerate(ideal_rels)
-    )
+    idcg = sum((2**rel - 1) / math.log2(i + 2) for i, rel in enumerate(ideal_rels))
     return dcg / idcg if idcg > 0 else 0.0
 
 
 # ── Imagery coherence ─────────────────────────────────────────────────────────
 
+
 def imagery_coherence_at_k(
-    results:            list[dict],
+    results: list[dict],
     query_imagery_tags: list[str],
-    k:                  int = 10,
-    imagery_key:        str = "imagery_tags_en",
+    k: int = 10,
+    imagery_key: str = "imagery_tags_en",
 ) -> float:
     """
     Fraction of top-K results that share ≥1 imagery tag with the query.
@@ -660,10 +686,10 @@ def imagery_coherence_at_k(
 
 # Known Gulf dialectal substitution rules (original → variant)
 DIALECT_SUBSTITUTION_RULES: list[tuple[str, str]] = [
-    ("\u062C", "\u064A"),  # ج → ي  (Gulf: شجرة→شيرة)
+    ("\u062c", "\u064a"),  # ج → ي  (Gulf: شجرة→شيرة)
     ("\u0643", "\u0686"),  # ك → چ  (kashkasha: كتاب→چتاب)
-    ("\u062E", "\u063A"),  # خ → غ  (voiceless/voiced velar)
-    ("\u062B", "\u0633"),  # ث → س  (Gulf interdental merger)
+    ("\u062e", "\u063a"),  # خ → غ  (voiceless/voiced velar)
+    ("\u062b", "\u0633"),  # ث → س  (Gulf interdental merger)
     ("\u0630", "\u0632"),  # ذ → ز  (voiced interdental merger)
     ("\u0642", "\u0621"),  # ق → ء  (urban Gulf glottal stop)
 ]
@@ -687,10 +713,10 @@ def generate_dialect_variants(text: str, n_variants: int = 3) -> list[str]:
 
 def query_robustness_score(
     original_query: str,
-    search_fn:      Callable[[str, int], list[dict]],
-    record_id_fn:   Callable[[dict], str],
-    k:              int = 10,
-    n_variants:     int = 3,
+    search_fn: Callable[[str, int], list[dict]],
+    record_id_fn: Callable[[dict], str],
+    k: int = 10,
+    n_variants: int = 3,
 ) -> float:
     """
     Recall@K stability under dialectal spelling variants.
@@ -729,6 +755,7 @@ def query_robustness_score(
 
 # ── ASR complement metrics (MER, WIL) ───────────────────────────────────────
 
+
 def match_error_rate(hypothesis: str, reference: str) -> float:
     """
     Match Error Rate: MER = (S + D + I) / (S + D + I + C).
@@ -760,9 +787,11 @@ def word_information_lost(hypothesis: str, reference: str) -> float:
 
 # ── Classification helpers ───────────────────────────────────────────────────
 
+
 def balanced_accuracy(y_true: list[int], y_pred: list[int]) -> float:
     """Balanced accuracy (macro-averaged recall). Wraps sklearn."""
     from sklearn.metrics import balanced_accuracy_score
+
     return float(balanced_accuracy_score(y_true, y_pred))
 
 
@@ -776,6 +805,7 @@ def log_loss_safe(
     Prevents crash when a class has 0 samples in the batch.
     """
     from sklearn.metrics import log_loss as sk_log_loss
+
     arr = np.array(prob_matrix, dtype=np.float64)
     eps = 1e-15
     arr = np.clip(arr, eps, 1.0 - eps)
@@ -803,9 +833,12 @@ def brier_score_multi(y_true_ids: list[int], prob_matrix: list[list[float]]) -> 
 
 # ── Emotion ranking metrics ──────────────────────────────────────────────────
 
+
 def top_k_accuracy(pred_probs: list[float], true_id: int, k: int = 3) -> float:
     """Returns 1.0 if true_id is in the top-k predictions, else 0.0."""
-    top_k_ids = sorted(range(len(pred_probs)), key=lambda i: pred_probs[i], reverse=True)[:k]
+    top_k_ids = sorted(
+        range(len(pred_probs)), key=lambda i: pred_probs[i], reverse=True
+    )[:k]
     return 1.0 if true_id in top_k_ids else 0.0
 
 
@@ -863,12 +896,17 @@ def lrap_score(
 ) -> float:
     """Label Ranking Average Precision. Wraps sklearn."""
     from sklearn.metrics import label_ranking_average_precision_score
-    return float(label_ranking_average_precision_score(
-        np.array(y_true_binary), np.array(y_score),
-    ))
+
+    return float(
+        label_ranking_average_precision_score(
+            np.array(y_true_binary),
+            np.array(y_score),
+        )
+    )
 
 
 # ── Calibration & agreement ─────────────────────────────────────────────────
+
 
 def expected_calibration_error(
     prob_rows: list[list[float]],
@@ -891,8 +929,10 @@ def expected_calibration_error(
     for lo, hi in zip(bins[:-1], bins[1:]):
         mask = (confidences >= lo) & (confidences < hi)
         if mask.sum() > 0:
-            ece += mask.sum() / len(true_ids) * abs(
-                correctness[mask].mean() - confidences[mask].mean()
+            ece += (
+                mask.sum()
+                / len(true_ids)
+                * abs(correctness[mask].mean() - confidences[mask].mean())
             )
     return float(ece)
 
@@ -900,6 +940,7 @@ def expected_calibration_error(
 def inter_annotator_kappa(labels_a: list, labels_b: list) -> float:
     """Cohen's kappa between two annotator label sequences. Wraps sklearn."""
     from sklearn.metrics import cohen_kappa_score
+
     return float(cohen_kappa_score(labels_a, labels_b))
 
 
@@ -947,6 +988,7 @@ def krippendorff_alpha_nominal(labels_a: list, labels_b: list) -> float:
 
 
 # ── Grouped bootstrap ───────────────────────────────────────────────────────
+
 
 def bootstrap_grouped_ci(
     metric_per_group: dict[str, float],

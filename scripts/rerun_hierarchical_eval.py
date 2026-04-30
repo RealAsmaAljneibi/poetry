@@ -17,7 +17,6 @@ Pipeline:
 """
 
 import json
-import pickle
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -47,6 +46,7 @@ MAX_SEQ_LEN = 32  # AraPoemBERT hard limit
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
+
 
 class HierarchicalPoetryClassifier(nn.Module):
     """
@@ -91,6 +91,7 @@ class HierarchicalPoetryClassifier(nn.Module):
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
+
 
 class PoemSequenceDataset(Dataset):
     """
@@ -164,6 +165,7 @@ def collate_poems(batch: list[dict]) -> dict:
 
 # ── Step 1: Compute test embeddings ────────────────────────────────────────────
 
+
 def compute_test_embeddings(device: torch.device, batch_size: int = 64) -> dict:
     """
     Load fine-tuned AraPoemBERT, run test.jsonl through it, return dict of poems.
@@ -177,9 +179,7 @@ def compute_test_embeddings(device: torch.device, batch_size: int = 64) -> dict:
             f"AraPoemBERT checkpoint not found: {ARAPOEM_CHECKPOINT}"
         )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        ARAPOEM_MODEL_NAME, local_files_only=True
-    )
+    tokenizer = AutoTokenizer.from_pretrained(ARAPOEM_MODEL_NAME, local_files_only=True)
     model = AutoModelForSequenceClassification.from_pretrained(
         ARAPOEM_MODEL_NAME,
         num_labels=NUM_CLASSES,
@@ -254,6 +254,7 @@ def compute_test_embeddings(device: torch.device, batch_size: int = 64) -> dict:
 
 # ── Step 3 & 4: Inference and evaluation ──────────────────────────────────────
 
+
 def inference(
     model: nn.Module,
     loader: DataLoader,
@@ -301,7 +302,7 @@ def inference(
     return all_preds, all_true, poem_data
 
 
-def poem_level_eval(poem_data: dict, class_names: list[str]) -> tuple[float, float]:
+def poem_level_eval(poem_data: dict, class_names: list[str]) -> tuple[float, float, str]:
     """Average clip softmax probs per poem, argmax → poem-level F1."""
     poem_preds, poem_true = [], []
     for pid, data in poem_data.items():
@@ -310,10 +311,7 @@ def poem_level_eval(poem_data: dict, class_names: list[str]) -> tuple[float, flo
         poem_true.append(data["labels"][0])
 
     f1 = f1_score(poem_true, poem_preds, average="macro", zero_division=0)
-    acc = (
-        sum(p == t for p, t in zip(poem_preds, poem_true))
-        / max(len(poem_true), 1)
-    )
+    acc = sum(p == t for p, t in zip(poem_preds, poem_true)) / max(len(poem_true), 1)
 
     short = [c.split("(")[0].strip() for c in class_names]
     present = sorted(set(poem_true))
@@ -330,6 +328,7 @@ def poem_level_eval(poem_data: dict, class_names: list[str]) -> tuple[float, flo
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     torch.manual_seed(SEED)
     np.random.seed(SEED)
@@ -342,7 +341,6 @@ def main():
     logger.info("=" * 70)
     poems = compute_test_embeddings(device)
 
-    # Create dataset and loader
     logger.info("\n" + "=" * 70)
     logger.info("STEP 2: LOADING HIERARCHICAL BILSTM CHECKPOINT")
     logger.info("=" * 70)
@@ -351,7 +349,6 @@ def main():
         test_ds, batch_size=16, shuffle=False, collate_fn=collate_poems, num_workers=0
     )
 
-    # Step 2: Load checkpoint
     if not HIERARCHICAL_CHECKPOINT.exists():
         raise FileNotFoundError(
             f"Hierarchical checkpoint not found: {HIERARCHICAL_CHECKPOINT}"
@@ -369,13 +366,11 @@ def main():
     model.load_state_dict(torch.load(HIERARCHICAL_CHECKPOINT, map_location=device))
     logger.success("Checkpoint loaded")
 
-    # Step 3 & 4: Inference
     logger.info("\n" + "=" * 70)
     logger.info("STEP 3 & 4: RUNNING INFERENCE ON TEST POEMS")
     logger.info("=" * 70)
     test_preds, test_true, test_poem_data = inference(model, test_loader, device)
 
-    # Compute clip-level metrics
     clip_f1 = f1_score(test_true, test_preds, average="macro", zero_division=0)
     clip_acc = sum(p == t for p, t in zip(test_preds, test_true)) / max(
         len(test_true), 1
@@ -386,7 +381,6 @@ def main():
         f"| n={len(test_true)} clips"
     )
 
-    # Compute poem-level metrics
     logger.info("\n" + "=" * 70)
     logger.info("STEP 5: POEM-LEVEL EVALUATION")
     logger.info("=" * 70)
@@ -397,7 +391,6 @@ def main():
         f"| n={len(test_poem_data)} poems"
     )
 
-    # Classification report (clip-level)
     short = [c.split("(")[0].strip() for c in GENRE_CLASSES]
     present = sorted(set(test_true))
     clip_report = classification_report(
@@ -409,7 +402,6 @@ def main():
     )
     logger.info(f"\nClip-level evaluation:\n{clip_report}")
 
-    # Step 6: Save results
     logger.info("\n" + "=" * 70)
     logger.info("STEP 6: SAVING RESULTS")
     logger.info("=" * 70)
@@ -439,7 +431,6 @@ def main():
         json.dump(results, f, indent=2, ensure_ascii=False)
     logger.success(f"Results saved to {output_file}")
 
-    # Final summary
     logger.info("\n" + "=" * 70)
     logger.info("EVALUATION COMPLETE")
     logger.info("=" * 70)
@@ -451,8 +442,6 @@ def main():
     logger.info(f"Report saved to:    {output_file}")
     logger.info("=" * 70)
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     logger.add("logs/rerun_hierarchical_eval.log", rotation="10 MB")

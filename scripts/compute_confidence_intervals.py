@@ -15,6 +15,7 @@ Method: 1000 bootstrap resamples with replacement.
 
 Output: outputs/reports/confidence_intervals.json
 """
+
 from __future__ import annotations
 
 import json
@@ -27,20 +28,26 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from sklearn.metrics import f1_score
+from sklearn.metrics import balanced_accuracy_score, f1_score
 from loguru import logger
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.data.labels import GENRE_CLASSES, EMOTION_CLASSES, ID2EMOTION, get_merged_emotion_classes
-from src.evaluation.metrics import emotion_partial_credit, bootstrap_grouped_ci, balanced_accuracy as calc_balanced_accuracy, emotion_ndcg_at_3, top_k_accuracy
+from src.data.labels import GENRE_CLASSES, ID2EMOTION, get_merged_emotion_classes
+from src.evaluation.metrics import (
+    emotion_partial_credit,
+    bootstrap_grouped_ci,
+    emotion_ndcg_at_3,
+    top_k_accuracy,
+)
 
 PROJECT_ROOT = Path(__file__).parent.parent
-N_BOOTSTRAP  = 1000
-RANDOM_SEED  = 42
-rng          = np.random.default_rng(RANDOM_SEED)
+N_BOOTSTRAP = 1000
+RANDOM_SEED = 42
+rng = np.random.default_rng(RANDOM_SEED)
 
 
 # ─── Bootstrap helper ─────────────────────────────────────────────────────────
+
 
 def bootstrap_ci(
     values: np.ndarray,
@@ -55,9 +62,13 @@ def bootstrap_ci(
     n_samples = len(values)
     stats = np.empty(n)
     for i in range(n):
-        idx    = rng.integers(0, n_samples, size=n_samples)
+        idx = rng.integers(0, n_samples, size=n_samples)
         stats[i] = stat_fn(values[idx])
-    return float(np.mean(stats)), float(np.percentile(stats, 100 * alpha / 2)), float(np.percentile(stats, 100 * (1 - alpha / 2)))
+    return (
+        float(np.mean(stats)),
+        float(np.percentile(stats, 100 * alpha / 2)),
+        float(np.percentile(stats, 100 * (1 - alpha / 2))),
+    )
 
 
 def macro_f1_from_pairs(pairs: np.ndarray) -> float:
@@ -67,22 +78,25 @@ def macro_f1_from_pairs(pairs: np.ndarray) -> float:
 
 # ─── Genre inference ──────────────────────────────────────────────────────────
 
+
 def run_genre_inference() -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Returns (y_true, y_pred, poem_ids) on test set."""
     from scripts.train_text_classifier import NabatiTextDataset
 
-    MODEL_NAME  = "faisalq/bert-base-arapoembert"
-    CKPT        = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
-    N_CLASSES   = len(GENRE_CLASSES)
+    MODEL_NAME = "faisalq/bert-base-arapoembert"
+    CKPT = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
+    N_CLASSES = len(GENRE_CLASSES)
     MAX_SEQ_LEN = 32
     CONTEXT_WIN = 3
-    BATCH_SIZE  = 64
-    DEVICE      = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    BATCH_SIZE = 64
+    DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
     logger.info("Loading genre model ...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, local_files_only=True)
     model = AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME, num_labels=N_CLASSES, ignore_mismatched_sizes=True,
+        MODEL_NAME,
+        num_labels=N_CLASSES,
+        ignore_mismatched_sizes=True,
         local_files_only=True,
     ).to(DEVICE)
     state = torch.load(CKPT, map_location=DEVICE, weights_only=False)
@@ -91,7 +105,10 @@ def run_genre_inference() -> tuple[np.ndarray, np.ndarray, list[str]]:
 
     test_ds = NabatiTextDataset(
         PROJECT_ROOT / "data/processed/test.jsonl",
-        tokenizer, "genre", MAX_SEQ_LEN, CONTEXT_WIN,
+        tokenizer,
+        "genre",
+        MAX_SEQ_LEN,
+        CONTEXT_WIN,
     )
     loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -112,6 +129,7 @@ def run_genre_inference() -> tuple[np.ndarray, np.ndarray, list[str]]:
 
 # ─── Arousal inference ────────────────────────────────────────────────────────
 
+
 def run_arousal_inference() -> tuple[np.ndarray, np.ndarray]:
     """Returns (y_true, y_pred) on test set using cached features."""
     import torch.nn as nn
@@ -121,17 +139,22 @@ def run_arousal_inference() -> tuple[np.ndarray, np.ndarray]:
             super().__init__()
             layers, in_dim = [], input_dim
             for _ in range(n_layers):
-                layers += [nn.Linear(in_dim, hidden_dim), nn.BatchNorm1d(hidden_dim),
-                           nn.ReLU(), nn.Dropout(dropout)]
+                layers += [
+                    nn.Linear(in_dim, hidden_dim),
+                    nn.BatchNorm1d(hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                ]
                 in_dim = hidden_dim
             layers.append(nn.Linear(hidden_dim, n_classes))
             self.net = nn.Sequential(*layers)
+
         def forward(self, x):
             return self.net(x)
 
     from src.data.arousal_labels import encode_arousal
 
-    CKPT   = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_mlp_arousal_best.pt"
+    CKPT = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_mlp_arousal_best.pt"
     SCALER = PROJECT_ROOT / "outputs/models/arousal_mlp/arousal_scaler.pkl"
     DEVICE = torch.device("cpu")
 
@@ -139,7 +162,9 @@ def run_arousal_inference() -> tuple[np.ndarray, np.ndarray]:
     state = torch.load(CKPT, map_location=DEVICE, weights_only=False)
 
     # Architecture from arousal_eval.json config (input_dim=34, hidden=128, n_layers=2)
-    model = ArousalMLP(input_dim=34, hidden_dim=128, n_layers=2, dropout=0.0, n_classes=3).to(DEVICE)
+    model = ArousalMLP(
+        input_dim=34, hidden_dim=128, n_layers=2, dropout=0.0, n_classes=3
+    ).to(DEVICE)
     model.load_state_dict(state, strict=True)
     model.eval()
 
@@ -152,8 +177,8 @@ def run_arousal_inference() -> tuple[np.ndarray, np.ndarray]:
 
     X_rows, y_rows = [], []
     for line in open(PROJECT_ROOT / "data/processed/test.jsonl"):
-        row   = json.loads(line)
-        path  = row.get("audio_filename", "")
+        row = json.loads(line)
+        path = row.get("audio_filename", "")
         label = encode_arousal(row.get("emotion_audio"))
         feats = feature_cache.get(path)
         if feats is None or label == -1:
@@ -172,23 +197,26 @@ def run_arousal_inference() -> tuple[np.ndarray, np.ndarray]:
 
 # ─── Emotion partial-credit inference ─────────────────────────────────────────
 
+
 def run_emotion_pc_inference() -> np.ndarray:
     """Returns per-clip partial-credit scores on test set."""
     from scripts.train_text_classifier import NabatiTextDataset
 
-    MODEL_NAME  = "faisalq/bert-base-arapoembert"
-    CKPT        = PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
-    MERGE_PROFILE = "rare_merge_v1"      # K1_merge_v1 — adopted emotion model
-    N_CLASSES   = len(get_merged_emotion_classes(MERGE_PROFILE))  # 9 classes
+    MODEL_NAME = "faisalq/bert-base-arapoembert"
+    CKPT = PROJECT_ROOT / "outputs/models/arapoem_emotion/arapoem_emotion_text_best.pt"
+    MERGE_PROFILE = "rare_merge_v1"  # adopted emotion merge profile
+    N_CLASSES = len(get_merged_emotion_classes(MERGE_PROFILE))  # 9 classes
     MAX_SEQ_LEN = 32
-    CONTEXT_WIN = 1                      # K1_merge_v1 uses window=1
-    BATCH_SIZE  = 64
-    DEVICE      = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    CONTEXT_WIN = 1  # K1_merge_v1 uses window=1
+    BATCH_SIZE = 64
+    DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
 
     logger.info("Loading emotion model ...")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, local_files_only=True)
     model = AutoModelForSequenceClassification.from_pretrained(
-        MODEL_NAME, num_labels=N_CLASSES, ignore_mismatched_sizes=True,
+        MODEL_NAME,
+        num_labels=N_CLASSES,
+        ignore_mismatched_sizes=True,
         local_files_only=True,
     ).to(DEVICE)
     state = torch.load(CKPT, map_location=DEVICE, weights_only=False)
@@ -197,7 +225,10 @@ def run_emotion_pc_inference() -> np.ndarray:
 
     test_ds = NabatiTextDataset(
         PROJECT_ROOT / "data/processed/test.jsonl",
-        tokenizer, "emotion_text", MAX_SEQ_LEN, CONTEXT_WIN,
+        tokenizer,
+        "emotion_text",
+        MAX_SEQ_LEN,
+        CONTEXT_WIN,
     )
     loader = DataLoader(test_ds, batch_size=BATCH_SIZE, shuffle=False)
 
@@ -223,8 +254,8 @@ def run_emotion_pc_inference() -> np.ndarray:
     for pred_id, true_id, poem_id in zip(all_preds, all_true, all_poem_ids):
         pred_label = ID2EMOTION.get(pred_id, "")
         true_label = ID2EMOTION.get(true_id, "")
-        row        = raw_rows.get(poem_id, {})
-        score      = emotion_partial_credit(
+        row = raw_rows.get(poem_id, {})
+        score = emotion_partial_credit(
             pred_label,
             row.get("emotion_audio", "") or "",
             true_label,
@@ -237,6 +268,7 @@ def run_emotion_pc_inference() -> np.ndarray:
 
 
 # ─── Retrieval per-query bootstrap ────────────────────────────────────────────
+
 
 def load_retrieval_query_scores() -> np.ndarray:
     """
@@ -256,83 +288,86 @@ def load_retrieval_query_scores() -> np.ndarray:
 
 # ─── Poem-level genre CI ──────────────────────────────────────────────────────
 
-def poem_level_f1_ci(y_true: np.ndarray, y_pred: np.ndarray, poem_ids: list[str]) -> tuple[float, float, float]:
-    """Bootstrap poem-level Macro-F1 (majority vote per poem)."""
+
+def _poem_majority_vote_bootstrap(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    poem_ids: list[str],
+    stat_fn,
+    obs_fn,
+) -> tuple[float, float, float]:
+    """Majority-vote per poem, then bootstrap CI. stat_fn acts on (N,2) pair array."""
     poems: dict[str, tuple[list[int], list[int]]] = defaultdict(lambda: ([], []))
     for yt, yp, pid in zip(y_true, y_pred, poem_ids):
         poems[pid][0].append(yt)
         poems[pid][1].append(yp)
-
     poem_true, poem_pred = [], []
     for pid, (trues, preds) in poems.items():
-        # majority vote
         poem_true.append(int(np.bincount(trues).argmax()))
         poem_pred.append(int(np.bincount(preds).argmax()))
-
     pairs = np.column_stack([poem_true, poem_pred])
-
-    def stat(idx_pairs):
-        return f1_score(idx_pairs[:, 0], idx_pairs[:, 1], average="macro", zero_division=0)
-
-    n_poems = len(pairs)
     stats = np.empty(N_BOOTSTRAP)
     for i in range(N_BOOTSTRAP):
-        idx    = rng.integers(0, n_poems, size=n_poems)
-        stats[i] = stat(pairs[idx])
-
-    observed = float(f1_score(poem_true, poem_pred, average="macro", zero_division=0))
+        idx = rng.integers(0, len(pairs), size=len(pairs))
+        stats[i] = stat_fn(pairs[idx])
+    observed = obs_fn(poem_true, poem_pred)
     return observed, float(np.percentile(stats, 2.5)), float(np.percentile(stats, 97.5))
+
+
+def poem_level_f1_ci(
+    y_true: np.ndarray, y_pred: np.ndarray, poem_ids: list[str]
+) -> tuple[float, float, float]:
+    return _poem_majority_vote_bootstrap(
+        y_true,
+        y_pred,
+        poem_ids,
+        stat_fn=macro_f1_from_pairs,
+        obs_fn=lambda t, p: float(f1_score(t, p, average="macro", zero_division=0)),
+    )
 
 
 def poem_level_balanced_accuracy_ci(
-    y_true: np.ndarray, y_pred: np.ndarray, poem_ids: list[str],
+    y_true: np.ndarray, y_pred: np.ndarray, poem_ids: list[str]
 ) -> tuple[float, float, float]:
-    """Bootstrap poem-level balanced accuracy (majority vote per poem)."""
-    from sklearn.metrics import balanced_accuracy_score
-    poems: dict[str, tuple[list[int], list[int]]] = defaultdict(lambda: ([], []))
-    for yt, yp, pid in zip(y_true, y_pred, poem_ids):
-        poems[pid][0].append(yt)
-        poems[pid][1].append(yp)
-
-    poem_true, poem_pred = [], []
-    for pid, (trues, preds) in poems.items():
-        poem_true.append(int(np.bincount(trues).argmax()))
-        poem_pred.append(int(np.bincount(preds).argmax()))
-
-    pairs = np.column_stack([poem_true, poem_pred])
-
-    def stat(idx_pairs):
-        return balanced_accuracy_score(idx_pairs[:, 0], idx_pairs[:, 1])
-
-    n_poems = len(pairs)
-    stats = np.empty(N_BOOTSTRAP)
-    for i in range(N_BOOTSTRAP):
-        idx = rng.integers(0, n_poems, size=n_poems)
-        stats[i] = stat(pairs[idx])
-
-    observed = float(balanced_accuracy_score(poem_true, poem_pred))
-    return observed, float(np.percentile(stats, 2.5)), float(np.percentile(stats, 97.5))
+    return _poem_majority_vote_bootstrap(
+        y_true,
+        y_pred,
+        poem_ids,
+        stat_fn=lambda pairs: balanced_accuracy_score(pairs[:, 0], pairs[:, 1]),
+        obs_fn=lambda t, p: float(balanced_accuracy_score(t, p)),
+    )
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     results: dict = {}
 
     # 1. Genre (poem-level only — clip-level not reported)
     logger.info("=" * 60)
-    logger.info("1. Genre Macro-F1 (poem-level)")
+    logger.info("1. Genre (poem-level)")
     y_true_g, y_pred_g, poem_ids_g = run_genre_inference()
 
     logger.info("1a. Genre Macro-F1 (poem-level)")
     poem_f1, pg_lo, pg_hi = poem_level_f1_ci(y_true_g, y_pred_g, poem_ids_g)
     logger.info(f"  Poem-level F1 = {poem_f1:.4f}  95% CI: [{pg_lo:.4f}, {pg_hi:.4f}]")
-    results["genre_poem_f1"] = {"value": round(poem_f1, 4), "ci_95": [round(pg_lo, 4), round(pg_hi, 4)]}
+    results["genre_poem_f1"] = {
+        "value": round(poem_f1, 4),
+        "ci_95": [round(pg_lo, 4), round(pg_hi, 4)],
+    }
 
-    logger.info("1c. Genre Balanced Accuracy (poem-level)")
-    ba_obs, ba_lo, ba_hi = poem_level_balanced_accuracy_ci(y_true_g, y_pred_g, poem_ids_g)
-    logger.info(f"  Poem-level Balanced Acc = {ba_obs:.4f}  95% CI: [{ba_lo:.4f}, {ba_hi:.4f}]")
-    results["genre_balanced_accuracy"] = {"value": round(ba_obs, 4), "ci_95": [round(ba_lo, 4), round(ba_hi, 4)]}
+    logger.info("1b. Genre Balanced Accuracy (poem-level)")
+    ba_obs, ba_lo, ba_hi = poem_level_balanced_accuracy_ci(
+        y_true_g, y_pred_g, poem_ids_g
+    )
+    logger.info(
+        f"  Poem-level Balanced Acc = {ba_obs:.4f}  95% CI: [{ba_lo:.4f}, {ba_hi:.4f}]"
+    )
+    results["genre_balanced_accuracy"] = {
+        "value": round(ba_obs, 4),
+        "ci_95": [round(ba_lo, 4), round(ba_hi, 4)],
+    }
 
     # 2. Arousal Macro-F1
     logger.info("=" * 60)
@@ -342,14 +377,19 @@ def main() -> None:
     pairs_a = np.column_stack([y_true_a, y_pred_a])
     a_mean, a_lo, a_hi = bootstrap_ci(pairs_a, macro_f1_from_pairs)
     logger.info(f"  Arousal F1 = {arousal_f1:.4f}  95% CI: [{a_lo:.4f}, {a_hi:.4f}]")
-    results["arousal_f1"] = {"value": round(arousal_f1, 4), "ci_95": [round(a_lo, 4), round(a_hi, 4)]}
+    results["arousal_f1"] = {
+        "value": round(arousal_f1, 4),
+        "ci_95": [round(a_lo, 4), round(a_hi, 4)],
+    }
 
     # 3. Emotion — poem-level grouped bootstrap (no clip-level)
     logger.info("=" * 60)
     logger.info("3. Emotion (poem-level grouped bootstrap)")
 
     # Load poem-level predictions for grouped bootstrap
-    poem_preds_path = PROJECT_ROOT / "outputs/reports/poem_emotion_predictions_test.json"
+    poem_preds_path = (
+        PROJECT_ROOT / "outputs/reports/poem_emotion_predictions_test.json"
+    )
     fusion_report_path = PROJECT_ROOT / "outputs/reports/emotion_fusion_eval.json"
     if poem_preds_path.exists() and fusion_report_path.exists():
         fusion_data = json.loads(fusion_report_path.read_text())
@@ -369,38 +409,70 @@ def main() -> None:
             per_poem_top3: dict[str, float] = {}
             for poem_id, payload in variant_preds.items():
                 gold = payload.get("gold_poem_emotion", "")
-                pred = payload.get("emotion_poem_final") or payload.get("predicted_poem_emotion", "")
+                pred = payload.get("emotion_poem_final") or payload.get(
+                    "predicted_poem_emotion", ""
+                )
                 genre = payload.get("manual_genre", "")
                 audio_aux = payload.get("audio_emotion_poem_aux") or ""
-                per_poem_pc[poem_id] = emotion_partial_credit(pred, audio_aux, gold, genre)
+                per_poem_pc[poem_id] = emotion_partial_credit(
+                    pred, audio_aux, gold, genre
+                )
 
                 probs = payload.get("poem_probabilities")
                 if probs and labels:
                     prob_vec = [float(probs.get(label, 0.0)) for label in labels]
-                    per_poem_ndcg[poem_id] = emotion_ndcg_at_3(prob_vec, gold, audio_aux, genre, labels)
+                    per_poem_ndcg[poem_id] = emotion_ndcg_at_3(
+                        prob_vec, gold, audio_aux, genre, labels
+                    )
                     true_id = labels.index(gold) if gold in labels else -1
-                    per_poem_top3[poem_id] = top_k_accuracy(prob_vec, true_id, k=3) if true_id >= 0 else 0.0
+                    per_poem_top3[poem_id] = (
+                        top_k_accuracy(prob_vec, true_id, k=3) if true_id >= 0 else 0.0
+                    )
 
             # Grouped bootstrap for poem-level PC
-            obs_pc, lo_pc, hi_pc = bootstrap_grouped_ci(per_poem_pc, n_bootstrap=N_BOOTSTRAP, seed=RANDOM_SEED)
+            obs_pc, lo_pc, hi_pc = bootstrap_grouped_ci(
+                per_poem_pc, n_bootstrap=N_BOOTSTRAP, seed=RANDOM_SEED
+            )
             logger.info(f"  Poem PC = {obs_pc:.4f}  95% CI: [{lo_pc:.4f}, {hi_pc:.4f}]")
-            results["emotion_poem_partial_credit"] = {"value": round(obs_pc, 4), "ci_95": [round(lo_pc, 4), round(hi_pc, 4)]}
+            results["emotion_poem_partial_credit"] = {
+                "value": round(obs_pc, 4),
+                "ci_95": [round(lo_pc, 4), round(hi_pc, 4)],
+            }
 
             if per_poem_ndcg:
-                obs_ndcg, lo_ndcg, hi_ndcg = bootstrap_grouped_ci(per_poem_ndcg, n_bootstrap=N_BOOTSTRAP, seed=RANDOM_SEED)
-                logger.info(f"  Poem nDCG@3 = {obs_ndcg:.4f}  95% CI: [{lo_ndcg:.4f}, {hi_ndcg:.4f}]")
-                results["emotion_ndcg_at_3"] = {"value": round(obs_ndcg, 4), "ci_95": [round(lo_ndcg, 4), round(hi_ndcg, 4)]}
+                obs_ndcg, lo_ndcg, hi_ndcg = bootstrap_grouped_ci(
+                    per_poem_ndcg, n_bootstrap=N_BOOTSTRAP, seed=RANDOM_SEED
+                )
+                logger.info(
+                    f"  Poem nDCG@3 = {obs_ndcg:.4f}  95% CI: [{lo_ndcg:.4f}, {hi_ndcg:.4f}]"
+                )
+                results["emotion_ndcg_at_3"] = {
+                    "value": round(obs_ndcg, 4),
+                    "ci_95": [round(lo_ndcg, 4), round(hi_ndcg, 4)],
+                }
 
             if per_poem_top3:
-                obs_t3, lo_t3, hi_t3 = bootstrap_grouped_ci(per_poem_top3, n_bootstrap=N_BOOTSTRAP, seed=RANDOM_SEED)
-                logger.info(f"  Poem Recall@3 = {obs_t3:.4f}  95% CI: [{lo_t3:.4f}, {hi_t3:.4f}]")
-                results["emotion_recall_at_3"] = {"value": round(obs_t3, 4), "ci_95": [round(lo_t3, 4), round(hi_t3, 4)]}
+                obs_t3, lo_t3, hi_t3 = bootstrap_grouped_ci(
+                    per_poem_top3, n_bootstrap=N_BOOTSTRAP, seed=RANDOM_SEED
+                )
+                logger.info(
+                    f"  Poem Recall@3 = {obs_t3:.4f}  95% CI: [{lo_t3:.4f}, {hi_t3:.4f}]"
+                )
+                results["emotion_recall_at_3"] = {
+                    "value": round(obs_t3, 4),
+                    "ci_95": [round(lo_t3, 4), round(hi_t3, 4)],
+                }
     else:
-        logger.warning("Poem-level predictions not found; running clip-level inference as fallback")
+        logger.warning(
+            "Poem-level predictions not found; running clip-level inference as fallback"
+        )
         pc_scores = run_emotion_pc_inference()
         pc_mean = float(pc_scores.mean())
-        em_mean, em_lo, em_hi = bootstrap_ci(pc_scores, np.mean)
-        results["emotion_partial_credit_fallback"] = {"value": round(pc_mean, 4), "ci_95": [round(em_lo, 4), round(em_hi, 4)]}
+        _, em_lo, em_hi = bootstrap_ci(pc_scores, np.mean)
+        results["emotion_partial_credit_fallback"] = {
+            "value": round(pc_mean, 4),
+            "ci_95": [round(em_lo, 4), round(em_hi, 4)],
+        }
 
     # 4. Retrieval GradedNDCG@10
     logger.info("=" * 60)
@@ -409,13 +481,15 @@ def main() -> None:
         (PROJECT_ROOT / "outputs/reports/retrieval_eval.json").read_text()
     )
     graded_ndcg = retrieval_report["Genre Retrieval"]["GradedNDCG@10"]
-    n_queries   = retrieval_report["Genre Retrieval"]["n_queries"]
+    n_queries = retrieval_report["Genre Retrieval"]["n_queries"]
 
-    p      = graded_ndcg
-    se     = np.sqrt(p * (1 - p) / n_queries)
-    r_lo   = max(0.0, p - 1.96 * se)
-    r_hi   = min(1.0, p + 1.96 * se)
-    logger.info(f"  GradedNDCG@10 = {graded_ndcg:.4f}  95% CI (CLT): [{r_lo:.4f}, {r_hi:.4f}]  (n={n_queries})")
+    p = graded_ndcg
+    se = np.sqrt(p * (1 - p) / n_queries)
+    r_lo = max(0.0, p - 1.96 * se)
+    r_hi = min(1.0, p + 1.96 * se)
+    logger.info(
+        f"  GradedNDCG@10 = {graded_ndcg:.4f}  95% CI (CLT): [{r_lo:.4f}, {r_hi:.4f}]  (n={n_queries})"
+    )
     results["retrieval_graded_ndcg_10"] = {
         "value": round(graded_ndcg, 4),
         "ci_95": [round(r_lo, 4), round(r_hi, 4)],
@@ -429,13 +503,13 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("  NOTE: N=13 test poems; CIs are honest but necessarily wide")
     display_rows = [
-        ("Genre Macro-F1 (poem)",        results.get("genre_poem_f1")),
-        ("Genre Balanced-Acc (poem)",     results.get("genre_balanced_accuracy")),
-        ("Arousal Macro-F1",             results.get("arousal_f1")),
-        ("Emotion PC (poem)",            results.get("emotion_poem_partial_credit")),
-        ("Emotion nDCG@3 (poem)",        results.get("emotion_ndcg_at_3")),
-        ("Emotion Recall@3 (poem)",      results.get("emotion_recall_at_3")),
-        ("Retrieval GradedNDCG@10",      results.get("retrieval_graded_ndcg_10")),
+        ("Genre Macro-F1 (poem)", results.get("genre_poem_f1")),
+        ("Genre Balanced-Acc (poem)", results.get("genre_balanced_accuracy")),
+        ("Arousal Macro-F1", results.get("arousal_f1")),
+        ("Emotion PC (poem)", results.get("emotion_poem_partial_credit")),
+        ("Emotion nDCG@3 (poem)", results.get("emotion_ndcg_at_3")),
+        ("Emotion Recall@3 (poem)", results.get("emotion_recall_at_3")),
+        ("Retrieval GradedNDCG@10", results.get("retrieval_graded_ndcg_10")),
     ]
     for name, r in display_rows:
         if r is None:

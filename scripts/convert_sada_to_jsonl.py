@@ -53,12 +53,7 @@ import re
 import sys
 from pathlib import Path
 
-# loguru for consistent logging with the rest of the project
-try:
-    from loguru import logger
-except ImportError:
-    import logging
-    logger = logging.getLogger(__name__)  # type: ignore[assignment]
+from loguru import logger
 
 PROJECT_ROOT = Path(__file__).parent.parent
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
@@ -111,6 +106,7 @@ def _discover_metadata_files(sada_dir: Path) -> list[Path]:
     candidates = []
     for ext in ("*.csv", "*.tsv"):
         candidates.extend(sada_dir.rglob(ext))
+
     # Prefer files with 'train' / 'all' / 'metadata' in name
     def priority(p: Path) -> int:
         name = p.stem.lower()
@@ -119,6 +115,7 @@ def _discover_metadata_files(sada_dir: Path) -> list[Path]:
         if "dev" in name or "val" in name:
             return 2
         return 1
+
     candidates.sort(key=priority)
     return candidates
 
@@ -180,14 +177,15 @@ def _parse_csv(csv_path: Path, sada_dir: Path) -> list[dict]:
         reader = csv.DictReader(fh, delimiter=delimiter)
         header = reader.fieldnames or []
 
-        audio_col = _find_column(list(header), AUDIO_COL_VARIANTS)
-        speaker_col = _find_column(list(header), SPEAKER_COL_VARIANTS)
-        segment_id_col = _find_column(list(header), SEGMENT_ID_COL_VARIANTS)
-        segment_start_col = _find_column(list(header), SEGMENT_START_COL_VARIANTS)
-        segment_end_col = _find_column(list(header), SEGMENT_END_COL_VARIANTS)
-        segment_length_col = _find_column(list(header), SEGMENT_LENGTH_COL_VARIANTS)
-        preferred_text_col = _find_column(list(header), ["processedtext", "groundtruthtext"])
-        text_col = preferred_text_col or _find_column(list(header), TEXT_COL_VARIANTS)
+        header_list = list(header)
+        audio_col = _find_column(header_list, AUDIO_COL_VARIANTS)
+        speaker_col = _find_column(header_list, SPEAKER_COL_VARIANTS)
+        segment_id_col = _find_column(header_list, SEGMENT_ID_COL_VARIANTS)
+        segment_start_col = _find_column(header_list, SEGMENT_START_COL_VARIANTS)
+        segment_end_col = _find_column(header_list, SEGMENT_END_COL_VARIANTS)
+        segment_length_col = _find_column(header_list, SEGMENT_LENGTH_COL_VARIANTS)
+        preferred_text_col = _find_column(header_list, ["processedtext", "groundtruthtext"])
+        text_col = preferred_text_col or _find_column(header_list, TEXT_COL_VARIANTS)
 
         if audio_col is None or text_col is None:
             logger.warning(
@@ -245,29 +243,37 @@ def _parse_csv(csv_path: Path, sada_dir: Path) -> list[dict]:
             if duration_sec is None and start_sec is not None and end_sec is not None:
                 duration_sec = max(0.0, end_sec - start_sec)
 
-            records.append({
-                "audio_filename": str(audio_path),
-                "audio_offset_sec": start_sec or 0.0,
-                "audio_duration_sec": duration_sec,
-                "text_corrected": text,
-                "text_whisper":   "",          # no Whisper baseline for SADA
-                "poet_en":        speaker_id,  # speaker ids are only file-local in SADA
-                "poet_ar":        "",
-                "source_poem":    utt_id,
-                "poem_title":     None,
-                "start":          int((start_sec or 0.0) * 1000),
-                "end":            int((end_sec or ((start_sec or 0.0) + (duration_sec or 0.0))) * 1000),
-                "genre_en":       "SADA",      # placeholder
-                "genre_ar":       "",
-                "emotion_text":   "Neutral / Descriptive (Wasfi)",
-                "emotion_text_ar": "",
-                "emotion_audio":  None,
-                "khaleeji_value": None,
-                "audio_quality":  "clean",
-            })
+            records.append(
+                {
+                    "audio_filename": str(audio_path),
+                    "audio_offset_sec": start_sec or 0.0,
+                    "audio_duration_sec": duration_sec,
+                    "text_corrected": text,
+                    "text_whisper": "",  # no Whisper baseline for SADA
+                    "poet_en": speaker_id,  # speaker ids are only file-local in SADA
+                    "poet_ar": "",
+                    "source_poem": utt_id,
+                    "poem_title": None,
+                    "start": int((start_sec or 0.0) * 1000),
+                    "end": int(
+                        (end_sec or ((start_sec or 0.0) + (duration_sec or 0.0))) * 1000
+                    ),
+                    "genre_en": "SADA",  # placeholder
+                    "genre_ar": "",
+                    "emotion_text": "Neutral / Descriptive (Wasfi)",
+                    "emotion_text_ar": "",
+                    "emotion_audio": None,
+                    "khaleeji_value": None,
+                    "audio_quality": "clean",
+                }
+            )
 
     if missing_audio:
-        logger.warning("{} rows skipped because audio files were not found under {}", missing_audio, sada_dir)
+        logger.warning(
+            "{} rows skipped because audio files were not found under {}",
+            missing_audio,
+            sada_dir,
+        )
     return records
 
 
@@ -289,26 +295,28 @@ def _discover_audio_txt_pairs(sada_dir: Path) -> list[dict]:
         if not text:
             continue
         speaker = audio_path.parent.name  # assume parent dir = speaker_id
-        records.append({
-            "audio_filename": str(audio_path.resolve()),
-            "audio_offset_sec": 0.0,
-            "audio_duration_sec": None,
-            "text_corrected": text,
-            "text_whisper":   "",
-            "poet_en":        speaker,
-            "poet_ar":        "",
-            "source_poem":    audio_path.stem,
-            "poem_title":     None,
-            "start":          0,
-            "end":            0,
-            "genre_en":       "SADA",
-            "genre_ar":       "",
-            "emotion_text":   "Neutral / Descriptive (Wasfi)",
-            "emotion_text_ar": "",
-            "emotion_audio":  None,
-            "khaleeji_value": None,
-            "audio_quality":  "clean",
-        })
+        records.append(
+            {
+                "audio_filename": str(audio_path.resolve()),
+                "audio_offset_sec": 0.0,
+                "audio_duration_sec": None,
+                "text_corrected": text,
+                "text_whisper": "",
+                "poet_en": speaker,
+                "poet_ar": "",
+                "source_poem": audio_path.stem,
+                "poem_title": None,
+                "start": 0,
+                "end": 0,
+                "genre_en": "SADA",
+                "genre_ar": "",
+                "emotion_text": "Neutral / Descriptive (Wasfi)",
+                "emotion_text_ar": "",
+                "emotion_audio": None,
+                "khaleeji_value": None,
+                "audio_quality": "clean",
+            }
+        )
 
     return records
 
@@ -335,7 +343,11 @@ def convert(
     # Try CSV/TSV metadata first
     meta_files = _discover_metadata_files(sada_dir)
     if meta_files:
-        logger.info("Found {} metadata file(s): {}", len(meta_files), [f.name for f in meta_files])
+        logger.info(
+            "Found {} metadata file(s): {}",
+            len(meta_files),
+            [f.name for f in meta_files],
+        )
         for mf in meta_files:
             batch = _parse_csv(mf, sada_dir)
             logger.info("  {} → {} records", mf.name, len(batch))
@@ -374,7 +386,9 @@ def convert(
         if keep:
             filtered.append(record)
         else:
-            filter_counts[reason or "unknown"] = filter_counts.get(reason or "unknown", 0) + 1
+            filter_counts[reason or "unknown"] = (
+                filter_counts.get(reason or "unknown", 0) + 1
+            )
     unique = filtered
 
     logger.info(
@@ -386,22 +400,22 @@ def convert(
     if filter_counts:
         logger.info("Filter breakdown: {}", filter_counts)
 
+    rng = random.Random(seed)
+
     if max_records and len(unique) > max_records:
         logger.info("Capping at {} records (--max-records)", max_records)
-        rng = random.Random(seed)
         rng.shuffle(unique)
         unique = unique[:max_records]
 
     # Speaker-disjoint split (mirrors the project's poet-disjoint split policy)
     speakers = list({r["poet_en"] for r in unique})
-    rng = random.Random(seed)
     rng.shuffle(speakers)
     n_val_speakers = max(1, int(len(speakers) * val_ratio))
-    val_speakers   = set(speakers[:n_val_speakers])
+    val_speakers = set(speakers[:n_val_speakers])
     train_speakers = set(speakers[n_val_speakers:])
 
     train_records = [r for r in unique if r["poet_en"] in train_speakers]
-    val_records   = [r for r in unique if r["poet_en"] in val_speakers]
+    val_records = [r for r in unique if r["poet_en"] in val_speakers]
 
     logger.info(
         "Speaker-disjoint split: {} train records ({} speakers), {} val records ({} speakers)",
@@ -413,7 +427,7 @@ def convert(
 
     # Write output
     train_path = output_dir / "sada_train.jsonl"
-    val_path   = output_dir / "sada_val.jsonl"
+    val_path = output_dir / "sada_val.jsonl"
 
     for path, split_records in [(train_path, train_records), (val_path, val_records)]:
         with path.open("w", encoding="utf-8") as fh:
@@ -490,11 +504,10 @@ def main() -> None:
         max_duration_sec=args.max_duration_sec,
     )
 
-    logger.success("Done. sada_train.jsonl: {} records, sada_val.jsonl: {} records", n_train, n_val)
+    logger.success(
+        "Done. sada_train.jsonl: {} records, sada_val.jsonl: {} records", n_train, n_val
+    )
     logger.info("Output: {}", args.output_dir)
-    logger.info("Next steps:")
-    logger.info("  just train-asr-run5-sada-stage1   # Gulf dialect anchoring (stage 1)")
-    logger.info("  just train-asr-run5-sada-stage2   # Nabati fine-tuning from stage-1 checkpoint")
 
 
 if __name__ == "__main__":

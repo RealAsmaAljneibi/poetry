@@ -2,26 +2,29 @@ from __future__ import annotations
 
 import json
 import sys
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
 from loguru import logger
-from sklearn.feature_extraction.text import TfidfVectorizer
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from _analysis_utils import batch_infer, load_arapoem_model, tfidf_top_terms, top_confusion_pairs
 
 from src.data.labels import GENRE_CLASSES, ID2GENRE, encode_genre, merge_genre_label
 
 PROJECT_ROOT = Path(__file__).parent.parent
-ARAPOEM_MODEL = "faisalq/bert-base-arapoembert"
 CHECKPOINT = PROJECT_ROOT / "outputs/models/arapoem_genre/arapoem_genre_best.pt"
 REPORT_MD = PROJECT_ROOT / "outputs/reports/genre_error_analysis.md"
 REPORT_JSON = PROJECT_ROOT / "outputs/reports/genre_error_analysis.json"
 MAX_SEQ_LEN = 32
-DEVICE = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = (
+    "mps"
+    if torch.backends.mps.is_available()
+    else ("cuda" if torch.cuda.is_available() else "cpu")
+)
 
 
 def load_windowed_records(jsonl_path: Path, context_window: int) -> list[dict]:
@@ -86,65 +89,33 @@ def load_train_documents(jsonl_path: Path) -> dict[str, str]:
 
 
 def predict(records: list[dict]) -> list[dict]:
-    tokenizer = AutoTokenizer.from_pretrained(ARAPOEM_MODEL, local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        ARAPOEM_MODEL,
-        num_labels=len(GENRE_CLASSES),
-        ignore_mismatched_sizes=True,
-        local_files_only=True,
+    tokenizer, model = load_arapoem_model(CHECKPOINT, len(GENRE_CLASSES), DEVICE)
+    probs_matrix = batch_infer(
+        model, tokenizer, [row["model_text"] for row in records], DEVICE, MAX_SEQ_LEN
     )
-    state = torch.load(CHECKPOINT, map_location="cpu", weights_only=False)
-    model.load_state_dict(state, strict=False)
-    model = model.to(DEVICE).eval()
-
-    batch_size = 16
     enriched: list[dict] = []
-    for start in range(0, len(records), batch_size):
-        batch = records[start : start + batch_size]
-        enc = tokenizer(
-            [row["model_text"] for row in batch],
-            max_length=MAX_SEQ_LEN,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
+    for row, prob in zip(records, probs_matrix, strict=True):
+        pred_id = int(np.argmax(prob))
+        enriched.append(
+            {
+                **row,
+                "pred_id": pred_id,
+                "pred_label": ID2GENRE[pred_id],
+                "confidence": float(prob[pred_id]),
+            }
         )
-        with torch.no_grad():
-            logits = model(
-                input_ids=enc["input_ids"].to(DEVICE),
-                attention_mask=enc["attention_mask"].to(DEVICE),
-            ).logits
-        probs = torch.softmax(logits, dim=-1).cpu().numpy()
-        for row, prob in zip(batch, probs, strict=True):
-            pred_id = int(np.argmax(prob))
-            pred_label = ID2GENRE[pred_id]
-            enriched.append(
-                {
-                    **row,
-                    "pred_id": pred_id,
-                    "pred_label": pred_label,
-                    "confidence": float(prob[pred_id]),
-                }
-            )
     return enriched
 
 
-def compute_distinctive_words(train_docs: dict[str, str], top_k: int = 10) -> dict[str, list[str]]:
-    labels = [genre for genre in GENRE_CLASSES if genre in train_docs]
-    docs = [train_docs[genre] for genre in labels]
-    vectorizer = TfidfVectorizer(token_pattern=r"(?u)\b\w+\b", lowercase=False, max_features=5000)
-    matrix = vectorizer.fit_transform(docs)
-    vocab = np.array(vectorizer.get_feature_names_out())
-
-    top_terms: dict[str, list[str]] = {}
-    for idx, genre in enumerate(labels):
-        row = matrix[idx].toarray().ravel()
-        order = row.argsort()[::-1]
-        words = [vocab[i] for i in order if row[i] > 0][:top_k]
-        top_terms[genre] = words
-    return top_terms
+def compute_distinctive_words(
+    train_docs: dict[str, str], top_k: int = 10
+) -> dict[str, list[str]]:
+    return tfidf_top_terms(train_docs, GENRE_CLASSES, top_k)
 
 
-def sample_examples(rows: list[dict], true_label: str, pred_label: str, limit: int = 5) -> list[dict]:
+def sample_examples(
+    rows: list[dict], true_label: str, pred_label: str, limit: int = 5
+) -> list[dict]:
     hits = [
         row
         for row in rows
@@ -154,16 +125,8 @@ def sample_examples(rows: list[dict], true_label: str, pred_label: str, limit: i
     return hits[:limit]
 
 
-def top_confusions(rows: list[dict]) -> list[tuple[tuple[str, str], int]]:
-    counts: Counter[tuple[str, str]] = Counter()
-    for row in rows:
-        if row["true_label"] != row["pred_label"]:
-            counts[(row["true_label"], row["pred_label"])] += 1
-    return counts.most_common()
-
-
 def build_summary(rows: list[dict], distinctive: dict[str, list[str]]) -> dict:
-    confusion_counts = top_confusions(rows)
+    confusion_counts = top_confusion_pairs(rows)
 
     target_pairs = [
         ("Shajan (Sorrow / Regret)", "Ghazal (Delicate love)"),
@@ -193,10 +156,12 @@ def build_summary(rows: list[dict], distinctive: dict[str, list[str]]) -> dict:
                 "count": sum(
                     1
                     for row in rows
-                    if row["true_label"] == true_label and row["pred_label"] == pred_label
+                    if row["true_label"] == true_label
+                    and row["pred_label"] == pred_label
                 ),
                 "shared_distinctive_words": sorted(
-                    set(distinctive.get(true_label, [])) & set(distinctive.get(pred_label, []))
+                    set(distinctive.get(true_label, []))
+                    & set(distinctive.get(pred_label, []))
                 ),
                 "linguistic_explanation": pair_explanations[(true_label, pred_label)],
                 "examples": examples,
@@ -238,7 +203,11 @@ def render_markdown(summary: dict) -> str:
     ]
 
     for item in summary["target_confusions"]:
-        example = item["examples"][0]["clip_text"] if item["examples"] else "No example available"
+        example = (
+            item["examples"][0]["clip_text"]
+            if item["examples"]
+            else "No example available"
+        )
         lines.append(
             f"| `{item['true_label']}` -> `{item['pred_label']}` | {item['count']} | "
             f"{item['linguistic_explanation']} | {example[:80]} |"
@@ -286,14 +255,18 @@ def render_markdown(summary: dict) -> str:
 def main() -> None:
     logger.add(PROJECT_ROOT / "logs/genre_error_analysis.log", rotation="10 MB")
 
-    test_records = load_windowed_records(PROJECT_ROOT / "data/processed/test.jsonl", context_window=3)
+    test_records = load_windowed_records(
+        PROJECT_ROOT / "data/processed/test.jsonl", context_window=3
+    )
     predicted = predict(test_records)
     train_docs = load_train_documents(PROJECT_ROOT / "data/processed/train.jsonl")
     distinctive = compute_distinctive_words(train_docs, top_k=10)
     summary = build_summary(predicted, distinctive)
 
     REPORT_JSON.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_JSON.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+    REPORT_JSON.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     REPORT_MD.write_text(render_markdown(summary), encoding="utf-8")
 
     logger.success(f"Genre error analysis → {REPORT_MD}")

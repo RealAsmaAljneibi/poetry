@@ -32,12 +32,10 @@ import json
 import os
 import pickle
 from pathlib import Path
-from typing import Optional
-
 import faiss
+from loguru import logger
 import numpy as np
 import torch
-from loguru import logger
 from transformers import AutoModel, AutoTokenizer
 
 DEFAULT_TEXT_MODEL = "faisalq/bert-base-arapoembert"
@@ -45,7 +43,10 @@ DEFAULT_TEXT_MODEL = "faisalq/bert-base-arapoembert"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _mean_pool(token_embeddings: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+
+def _mean_pool(
+    token_embeddings: torch.Tensor, attention_mask: torch.Tensor
+) -> torch.Tensor:
     """
     Mean-pool token embeddings weighted by the attention mask.
     More robust than [CLS] alone for variable-length poetry verses.
@@ -82,6 +83,7 @@ def _tag_overlap_score(query: str, tags: str) -> float:
 
 # ── Main class ────────────────────────────────────────────────────────────────
 
+
 class NabatiRetriever:
     """
     Semantic search over Nabati poetry corpus.
@@ -98,20 +100,20 @@ class NabatiRetriever:
         FAISS IndexFlatIP over 512-dim audio CNN embeddings (optional).
     """
 
-    TEXT_DIM  = 768   # AraPoemBERT hidden size
-    AUDIO_DIM = 512   # Emotion1DCNN embed() output size
-    BATCH     = 32    # encoding batch size
+    TEXT_DIM = 768  # AraPoemBERT hidden size
+    AUDIO_DIM = 512  # Emotion1DCNN embed() output size
+    BATCH = 32  # encoding batch size
 
     def __init__(self) -> None:
-        self.text_model_name: str          = ""
-        self.records:         list[dict]   = []
-        self.text_index:      faiss.Index  = None   # type: ignore[assignment]
-        self.audio_index:     Optional[faiss.Index] = None
+        self.text_model_name: str = ""
+        self.records: list[dict] = []
+        self.text_index: faiss.Index = None  # type: ignore[assignment]
+        self.audio_index: faiss.Index | None = None
 
         # Lazy-loaded encoder (not persisted to disk — reloaded on demand)
-        self._tokenizer  = None
+        self._tokenizer = None
         self._text_model = None
-        self._device     = "cpu"
+        self._device = "cpu"
 
     # ── Encoding ──────────────────────────────────────────────────────────────
 
@@ -126,9 +128,15 @@ class NabatiRetriever:
             return
         model_source = self._resolve_model_source(model_name)
         logger.info(f"Loading text encoder: {model_source}")
-        self._tokenizer  = AutoTokenizer.from_pretrained(model_source, local_files_only=True)
-        self._text_model = AutoModel.from_pretrained(model_source, local_files_only=True).to(device).eval()
-        self._device     = device
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            model_source, local_files_only=True
+        )
+        self._text_model = (
+            AutoModel.from_pretrained(model_source, local_files_only=True)
+            .to(device)
+            .eval()
+        )
+        self._device = device
         self.text_model_name = model_source
 
     @torch.no_grad()
@@ -139,12 +147,12 @@ class NabatiRetriever:
             batch = texts[i : i + self.BATCH]
             enc = self._tokenizer(
                 batch,
-                max_length=32,          # AraPoemBERT hard limit
+                max_length=32,  # AraPoemBERT hard limit
                 padding="max_length",
                 truncation=True,
                 return_tensors="pt",
             )
-            input_ids      = enc["input_ids"].to(self._device)
+            input_ids = enc["input_ids"].to(self._device)
             attention_mask = enc["attention_mask"].to(self._device)
 
             out = self._text_model(input_ids=input_ids, attention_mask=attention_mask)
@@ -184,15 +192,15 @@ class NabatiRetriever:
         logger.info(f"Indexing {len(records)} poems from {len(jsonl_paths)} splits...")
 
         texts = [r["text_corrected"] for r in records]
-        vecs  = retriever._encode_texts(texts)
-        vecs  = _l2_normalise(vecs)
+        vecs = retriever._encode_texts(texts)
+        vecs = _l2_normalise(vecs)
 
         # Build FAISS index — IndexFlatIP gives exact cosine similarity search
         index = faiss.IndexFlatIP(cls.TEXT_DIM)
         index.add(vecs)  # type: ignore[arg-type]
         logger.success(f"Text index built: {index.ntotal} vectors, dim={cls.TEXT_DIM}")
 
-        retriever.records    = records
+        retriever.records = records
         retriever.text_index = index
         return retriever
 
@@ -205,13 +213,35 @@ class NabatiRetriever:
             vecs = extract_audio_embeddings(model, records)
             retriever.add_audio_embeddings(vecs)
         """
-        assert len(audio_vecs) == len(self.records), \
+        assert len(audio_vecs) == len(self.records), (
             f"audio_vecs rows ({len(audio_vecs)}) ≠ records ({len(self.records)})"
+        )
         normed = _l2_normalise(audio_vecs.astype(np.float32))
-        index  = faiss.IndexFlatIP(self.AUDIO_DIM)
+        index = faiss.IndexFlatIP(self.AUDIO_DIM)
         index.add(normed)  # type: ignore[arg-type]
         self.audio_index = index
-        logger.success(f"Audio index added: {index.ntotal} vectors, dim={self.AUDIO_DIM}")
+        logger.success(
+            f"Audio index added: {index.ntotal} vectors, dim={self.AUDIO_DIM}"
+        )
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _make_result(self, rec: dict, score: float, extra: dict | None = None) -> dict:
+        result = {
+            "score": score,
+            "text_corrected": rec.get("text_corrected", ""),
+            "genre_en": rec.get("genre_en", ""),
+            "emotion_text": rec.get("emotion_text", ""),
+            "emotion_audio": rec.get("emotion_audio"),
+            "poet_en": rec.get("poet_en", ""),
+            "source_poem": rec.get("source_poem", ""),
+            "audio_filename": rec.get("audio_filename", ""),
+            "translation_en": rec.get("translation_en"),
+            "imagery_tags_en": rec.get("imagery_tags_en"),
+        }
+        if extra:
+            result.update(extra)
+        return result
 
     # ── Search ────────────────────────────────────────────────────────────────
 
@@ -219,11 +249,11 @@ class NabatiRetriever:
         self,
         query: str,
         top_k: int = 5,
-        genre_filter:    Optional[str] = None,
-        emotion_filter:  Optional[str] = None,
-        imagery_filter:  Optional[str] = None,
-        tag_boost:       float = 0.15,
-        alpha:           float = 1.0,
+        genre_filter: str | None = None,
+        emotion_filter: str | None = None,
+        imagery_filter: str | None = None,
+        tag_boost: float = 0.15,
+        alpha: float = 1.0,
     ) -> list[dict]:
         """
         Search by text query. Returns top_k results sorted by similarity.
@@ -252,7 +282,7 @@ class NabatiRetriever:
             Ignored when no audio index is present.
         """
         # Encode query
-        q_vec = self._encode_texts([query])          # (1, 768)
+        q_vec = self._encode_texts([query])  # (1, 768)
         q_vec = _l2_normalise(q_vec)
 
         # Over-fetch to allow for post-filter attrition and re-ranking
@@ -264,7 +294,7 @@ class NabatiRetriever:
         for score, idx in zip(scores[0], idxs[0]):
             if idx < 0:
                 continue
-            rec  = self.records[idx]
+            rec = self.records[idx]
             tags = str(rec.get("imagery_tags_en") or "")
             boosted = float(score) + tag_boost * _tag_overlap_score(query, tags)
             candidates.append((boosted, idx))
@@ -277,9 +307,13 @@ class NabatiRetriever:
             rec = self.records[idx]
 
             # Genre / emotion post-filters — partial match
-            if genre_filter and not rec.get("genre_en", "").lower().startswith(genre_filter.lower()):
+            if genre_filter and not rec.get("genre_en", "").lower().startswith(
+                genre_filter.lower()
+            ):
                 continue
-            if emotion_filter and not rec.get("emotion_text", "").lower().startswith(emotion_filter.lower()):
+            if emotion_filter and not rec.get("emotion_text", "").lower().startswith(
+                emotion_filter.lower()
+            ):
                 continue
 
             # Imagery hard-filter — substring match against full tags string
@@ -288,18 +322,7 @@ class NabatiRetriever:
                 if imagery_filter.lower() not in tags:
                     continue
 
-            results.append({
-                "score":           boosted_score,
-                "text_corrected":  rec.get("text_corrected", ""),
-                "genre_en":        rec.get("genre_en", ""),
-                "emotion_text":    rec.get("emotion_text", ""),
-                "emotion_audio":   rec.get("emotion_audio"),
-                "poet_en":         rec.get("poet_en", ""),
-                "source_poem":     rec.get("source_poem", ""),
-                "audio_filename":  rec.get("audio_filename", ""),
-                "translation_en":  rec.get("translation_en"),
-                "imagery_tags_en": rec.get("imagery_tags_en"),
-            })
+            results.append(self._make_result(rec, boosted_score))
 
             if len(results) >= top_k:
                 break
@@ -312,7 +335,7 @@ class NabatiRetriever:
         audio_vec: np.ndarray,
         top_k: int = 5,
         alpha: float = 0.6,
-        genre_filter: Optional[str] = None,
+        genre_filter: str | None = None,
     ) -> list[dict]:
         """
         α·text_score + (1-α)·audio_score — the proposal's weighted similarity fusion.
@@ -354,21 +377,18 @@ class NabatiRetriever:
         results: list[dict] = []
         for idx, score in ranked:
             rec = self.records[idx]
-            if genre_filter and not rec.get("genre_en", "").lower().startswith(genre_filter.lower()):
+            if genre_filter and not rec.get("genre_en", "").lower().startswith(
+                genre_filter.lower()
+            ):
                 continue
-            results.append({
-                "score":           score,
-                "text_score":      alpha * float(t_scores[0][list(t_idxs[0]).index(idx)] if idx in t_idxs[0] else 0),
-                "audio_score":     (1 - alpha) * float(a_scores[0][list(a_idxs[0]).index(idx)] if idx in a_idxs[0] else 0),
-                "text_corrected":  rec.get("text_corrected", ""),
-                "genre_en":        rec.get("genre_en", ""),
-                "emotion_text":    rec.get("emotion_text", ""),
-                "emotion_audio":   rec.get("emotion_audio"),
-                "poet_en":         rec.get("poet_en", ""),
-                "source_poem":     rec.get("source_poem", ""),
-                "audio_filename":  rec.get("audio_filename", ""),
-                "imagery_tags_en": rec.get("imagery_tags_en"),
-            })
+            results.append(self._make_result(rec, score, extra={
+                "text_score": alpha * float(
+                    t_scores[0][list(t_idxs[0]).index(idx)] if idx in t_idxs[0] else 0
+                ),
+                "audio_score": (1 - alpha) * float(
+                    a_scores[0][list(a_idxs[0]).index(idx)] if idx in a_idxs[0] else 0
+                ),
+            }))
             if len(results) >= top_k:
                 break
 
@@ -378,10 +398,10 @@ class NabatiRetriever:
         self,
         query: str,
         top_k: int = 5,
-        genre_filter:   Optional[str] = None,
-        emotion_filter: Optional[str] = None,
-        imagery_filter: Optional[str] = None,
-        tag_boost:      float = 0.15,
+        genre_filter: str | None = None,
+        emotion_filter: str | None = None,
+        imagery_filter: str | None = None,
+        tag_boost: float = 0.15,
     ) -> list[dict]:
         """
         Poem-level search: retrieves clips then deduplicates by source_poem.
@@ -435,7 +455,7 @@ class NabatiRetriever:
             faiss.write_index(self.audio_index, str(directory / "audio.index"))
         meta = {
             "text_model_name": self.text_model_name,
-            "records":         self.records,
+            "records": self.records,
         }
         with open(directory / "meta.pkl", "wb") as f:
             pickle.dump(meta, f)
@@ -452,9 +472,9 @@ class NabatiRetriever:
         retriever = cls()
         with open(directory / "meta.pkl", "rb") as f:
             meta = pickle.load(f)
-        retriever.records         = meta["records"]
+        retriever.records = meta["records"]
         retriever.text_model_name = meta["text_model_name"]
-        retriever.text_index      = faiss.read_index(str(directory / "text.index"))
+        retriever.text_index = faiss.read_index(str(directory / "text.index"))
 
         audio_path = directory / "audio.index"
         if audio_path.exists():
@@ -465,7 +485,11 @@ class NabatiRetriever:
 
         logger.success(
             f"Retriever loaded: {retriever.text_index.ntotal} text vectors"
-            + (f" + {retriever.audio_index.ntotal} audio vectors" if retriever.audio_index else "")
+            + (
+                f" + {retriever.audio_index.ntotal} audio vectors"
+                if retriever.audio_index
+                else ""
+            )
         )
         return retriever
 

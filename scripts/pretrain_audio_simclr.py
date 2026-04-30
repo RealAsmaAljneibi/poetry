@@ -3,9 +3,6 @@ scripts/pretrain_audio_simclr.py
 
 SimCLR self-supervised pre-training for the Emotion1DCNN encoder.
 
-Course: Week 4 SSL lab (06_ssl_aed_denomination.ipynb)
-  "Learn representations WITHOUT labels by solving a contrastive task."
-
 Key idea: Feed the same audio clip through two different random augmentations.
 The encoder is trained to produce similar embeddings for the two views of the
 same clip (positive pair) and dissimilar embeddings for different clips (negatives).
@@ -37,20 +34,21 @@ from src.training.trainer import set_seed, get_scheduler
 
 # ── Hyper-parameters ──────────────────────────────────────────────────────────
 
-SAMPLE_RATE    = 16_000
-MAX_AUDIO_SEC  = 8
-N_MELS         = 128
-BATCH_SIZE     = 64
-EPOCHS         = 80
-LR             = 3e-4          # SimCLR uses lower LR than supervised
-WEIGHT_DECAY   = 1e-4
-WARMUP_RATIO   = 0.1           # longer warmup than supervised (SSL lab)
-TEMPERATURE    = 0.5           # NT-Xent temperature (0.5 is standard)
-PROJ_DIM       = 128           # projection head output dimension
-SEED           = 42
+SAMPLE_RATE = 16_000
+MAX_AUDIO_SEC = 8
+N_MELS = 128
+BATCH_SIZE = 64
+EPOCHS = 80
+LR = 3e-4  # SimCLR uses lower LR than supervised
+WEIGHT_DECAY = 1e-4
+WARMUP_RATIO = 0.1
+TEMPERATURE = 0.5  # NT-Xent temperature (0.5 is standard)
+PROJ_DIM = 128  # projection head output dimension
+SEED = 42
 
 
-# ── NT-Xent Loss (from course SSL lab) ────────────────────────────────────────
+# ── NT-Xent Loss ────────────────────────────────────────────────────────────────
+
 
 class NTXentLoss(nn.Module):
     """
@@ -69,15 +67,8 @@ class NTXentLoss(nn.Module):
         self.temperature = temperature
 
     def forward(self, z_i: torch.Tensor, z_j: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            z_i: (B, dim) L2-normalised embeddings for view 1
-            z_j: (B, dim) L2-normalised embeddings for view 2
-        Returns:
-            Scalar NT-Xent loss
-        """
         B = z_i.shape[0]
-        z = torch.cat([z_i, z_j], dim=0)          # (2B, dim)
+        z = torch.cat([z_i, z_j], dim=0)  # (2B, dim)
 
         # Cosine similarity matrix (already normalised, so just dot product)
         sim = torch.mm(z, z.T) / self.temperature  # (2B, 2B)
@@ -87,15 +78,18 @@ class NTXentLoss(nn.Module):
         sim = sim.masked_fill(mask, -1e9)
 
         # Positive index: for i in [0,B) the positive is i+B, and vice versa
-        labels = torch.cat([
-            torch.arange(B, 2 * B, device=z.device),  # view1_i → view2_i
-            torch.arange(0, B,     device=z.device),  # view2_i → view1_i
-        ])
+        labels = torch.cat(
+            [
+                torch.arange(B, 2 * B, device=z.device),  # view1_i → view2_i
+                torch.arange(0, B, device=z.device),  # view2_i → view1_i
+            ]
+        )
 
         return F.cross_entropy(sim, labels)
 
 
 # ── Projection Head ───────────────────────────────────────────────────────────
+
 
 class ProjectionHead(nn.Module):
     """
@@ -107,7 +101,9 @@ class ProjectionHead(nn.Module):
     the encoder embeddings for downstream tasks.
     """
 
-    def __init__(self, input_dim: int = 512, hidden_dim: int = 256, output_dim: int = 128):
+    def __init__(
+        self, input_dim: int = 512, hidden_dim: int = 256, output_dim: int = 128
+    ):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -122,6 +118,7 @@ class ProjectionHead(nn.Module):
 
 
 # ── Audio Augmentation ────────────────────────────────────────────────────────
+
 
 def random_augment(wav: np.ndarray, sr: int, max_len: int, n_mels: int) -> torch.Tensor:
     """
@@ -157,8 +154,9 @@ def random_augment(wav: np.ndarray, sr: int, max_len: int, n_mels: int) -> torch
     mel_t = torch.tensor(mel_db)  # (n_mels, T)
 
     # 5. SpecAugment — frequency and time masking
-    mel_t = _spec_augment(mel_t, freq_mask_param=30, time_mask_param=50,
-                          num_freq=2, num_time=2)
+    mel_t = _spec_augment(
+        mel_t, freq_mask_param=30, time_mask_param=50, num_freq=2, num_time=2
+    )
     return mel_t
 
 
@@ -188,6 +186,7 @@ def _spec_augment(
 
 # ── SSL Dataset ───────────────────────────────────────────────────────────────
 
+
 class AudioSSLDataset(Dataset):
     """
     Returns TWO differently-augmented views of the same audio clip (positive pair).
@@ -203,9 +202,9 @@ class AudioSSLDataset(Dataset):
         sample_rate: int = SAMPLE_RATE,
         n_mels: int = N_MELS,
     ):
-        self.sr      = sample_rate
+        self.sr = sample_rate
         self.max_len = max_audio_sec * sample_rate
-        self.n_mels  = n_mels
+        self.n_mels = n_mels
         self.paths: list[Path] = []
 
         seen = set()
@@ -240,11 +239,14 @@ class AudioSSLDataset(Dataset):
 
 # ── Collate (pad to batch max time) ──────────────────────────────────────────
 
+
 def collate_ssl(batch: list[tuple]) -> tuple[torch.Tensor, torch.Tensor]:
     v1s, v2s = zip(*batch)
     max_T = max(v.shape[-1] for v in v1s + v2s)
+
     def pad(v):
         return F.pad(v, (0, max_T - v.shape[-1]))
+
     return (
         torch.stack([pad(v) for v in v1s]),
         torch.stack([pad(v) for v in v2s]),
@@ -253,47 +255,67 @@ def collate_ssl(batch: list[tuple]) -> tuple[torch.Tensor, torch.Tensor]:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     logger.add("logs/pretrain_simclr.log", rotation="10 MB")
     set_seed(SEED)
 
-    device = torch.device("mps" if torch.backends.mps.is_available()
-                          else "cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"SimCLR pre-training | device={device} | epochs={EPOCHS} | "
-                f"batch={BATCH_SIZE} | lr={LR:.1e} | τ={TEMPERATURE}")
+    device = torch.device(
+        "mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu"
+    )
+    logger.info(
+        f"SimCLR pre-training | device={device} | epochs={EPOCHS} | "
+        f"batch={BATCH_SIZE} | lr={LR:.1e} | τ={TEMPERATURE}"
+    )
 
     # ── Data ──────────────────────────────────────────────────────────────────
     data_dir = Path("data/processed")
-    ssl_ds = AudioSSLDataset([
-        data_dir / "train.jsonl",
-        data_dir / "val.jsonl",
-        data_dir / "test.jsonl",
-    ])
+    ssl_ds = AudioSSLDataset(
+        [
+            data_dir / "train.jsonl",
+            data_dir / "val.jsonl",
+            data_dir / "test.jsonl",
+        ]
+    )
     if len(ssl_ds) == 0:
         logger.error("No audio files found. Check data/processed/*.jsonl paths.")
         return
 
-    loader = DataLoader(ssl_ds, batch_size=BATCH_SIZE, shuffle=True,
-                        num_workers=0, collate_fn=collate_ssl, drop_last=True)
-    logger.info(f"Loader: {len(loader)} batches/epoch "
-                f"(effective negatives per sample: {2 * BATCH_SIZE - 2})")
+    loader = DataLoader(
+        ssl_ds,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=0,
+        collate_fn=collate_ssl,
+        drop_last=True,
+    )
+    logger.info(
+        f"Loader: {len(loader)} batches/epoch "
+        f"(effective negatives per sample: {2 * BATCH_SIZE - 2})"
+    )
 
     # ── Model: encoder + projection head ─────────────────────────────────────
-    encoder = Emotion1DCNN(num_classes=12).to(device)   # num_classes unused in SSL
-    proj    = ProjectionHead(input_dim=512, hidden_dim=256, output_dim=PROJ_DIM).to(device)
+    encoder = Emotion1DCNN(num_classes=12).to(device)  # num_classes unused in SSL
+    proj = ProjectionHead(input_dim=512, hidden_dim=256, output_dim=PROJ_DIM).to(device)
 
-    enc_params  = sum(p.numel() for p in encoder.parameters())
+    enc_params = sum(p.numel() for p in encoder.parameters())
     proj_params = sum(p.numel() for p in proj.parameters())
-    logger.info(f"Encoder: {enc_params:,} params | ProjectionHead: {proj_params:,} params")
+    logger.info(
+        f"Encoder: {enc_params:,} params | ProjectionHead: {proj_params:,} params"
+    )
 
     # ── Loss ──────────────────────────────────────────────────────────────────
     criterion = NTXentLoss(temperature=TEMPERATURE)
 
     # ── Optimizer + Scheduler ─────────────────────────────────────────────────
-    params    = list(encoder.parameters()) + list(proj.parameters())
+    params = list(encoder.parameters()) + list(proj.parameters())
     optimizer = torch.optim.AdamW(params, lr=LR, weight_decay=WEIGHT_DECAY)
     total_steps = len(loader) * EPOCHS
-    scheduler   = get_scheduler(optimizer, total_steps, WARMUP_RATIO)
+    scheduler = get_scheduler(optimizer, total_steps, WARMUP_RATIO)
 
     # ── Pre-training loop ─────────────────────────────────────────────────────
     output_dir = Path("outputs/models")
@@ -301,8 +323,9 @@ def main():
     best_loss = float("inf")
 
     logger.info("=" * 60)
-    logger.info(f"Starting SimCLR pre-training: {EPOCHS} epochs, "
-                f"{len(loader)} steps/epoch")
+    logger.info(
+        f"Starting SimCLR pre-training: {EPOCHS} epochs, {len(loader)} steps/epoch"
+    )
     logger.info("=" * 60)
 
     for epoch in range(EPOCHS):
@@ -314,7 +337,7 @@ def main():
             v1, v2 = v1.to(device), v2.to(device)
 
             # Encoder embed → projection head → L2-normalised
-            z1 = proj(encoder.embed(v1))   # (B, PROJ_DIM)
+            z1 = proj(encoder.embed(v1))  # (B, PROJ_DIM)
             z2 = proj(encoder.embed(v2))
 
             loss = criterion(z1, z2)
@@ -332,7 +355,7 @@ def main():
 
         if (epoch + 1) % 10 == 0 or epoch == 0:
             logger.info(
-                f"Epoch {epoch+1:3d}/{EPOCHS} | "
+                f"Epoch {epoch + 1:3d}/{EPOCHS} | "
                 f"NT-Xent loss={avg_loss:.4f} | lr={current_lr:.2e}"
             )
 
@@ -344,11 +367,13 @@ def main():
 
     logger.success(
         f"Pre-training done. Best NT-Xent loss={best_loss:.4f} "
-        f"(< 2.5 indicates good clustering per course guidelines)"
+        f"(< 2.5 indicates good clustering)"
     )
     logger.info(f"Encoder weights saved → {output_dir / 'simclr_encoder.pt'}")
-    logger.info("Next step: run train_audio_cnn.py --pretrained-encoder "
-                "outputs/models/simclr_encoder.pt")
+    logger.info(
+        "Next step: run train_audio_cnn.py --pretrained-encoder "
+        "outputs/models/simclr_encoder.pt"
+    )
 
 
 if __name__ == "__main__":

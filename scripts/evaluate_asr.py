@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -34,24 +35,30 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.evaluation.metrics import soft_cer, standard_cer, standard_wer, match_error_rate, word_information_lost
+from src.evaluation.metrics import (
+    soft_cer,
+    standard_cer,
+    standard_wer,
+    match_error_rate,
+    word_information_lost,
+)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-DATA_DIR   = Path("data/processed")
+DATA_DIR = Path("data/processed")
 REPORT_DIR = Path("outputs/reports")
 
 SPLIT_FILES = {
     "train": DATA_DIR / "train.jsonl",
-    "val":   DATA_DIR / "val.jsonl",
-    "test":  DATA_DIR / "test.jsonl",
+    "val": DATA_DIR / "val.jsonl",
+    "test": DATA_DIR / "test.jsonl",
 }
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
+
 
 def load_split(split: str) -> pd.DataFrame:
     path = SPLIT_FILES[split]
@@ -68,6 +75,7 @@ def load_split(split: str) -> pd.DataFrame:
 
 # ── Per-record metric computation ─────────────────────────────────────────────
 
+
 def compute_metrics_row(
     hyp: str,
     ref: str,
@@ -76,32 +84,36 @@ def compute_metrics_row(
     hyp = str(hyp) if hyp else ""
     ref = str(ref) if ref else ""
     return {
-        "wer":      standard_wer(hyp, ref),
-        "cer":      standard_cer(hyp, ref),
+        "wer": standard_wer(hyp, ref),
+        "cer": standard_cer(hyp, ref),
         "soft_cer": soft_cer(hyp, ref),
-        "mer":      match_error_rate(hyp, ref),
-        "wil":      word_information_lost(hyp, ref),
+        "mer": match_error_rate(hyp, ref),
+        "wil": word_information_lost(hyp, ref),
     }
 
 
 # ── Aggregation helpers ───────────────────────────────────────────────────────
 
+
 def summarise(rows: list[dict[str, float]], label: str) -> dict:
     if not rows:
         return {"label": label, "n": 0}
-    arr = np.array([[r["wer"], r["cer"], r["soft_cer"], r["mer"], r["wil"]] for r in rows])
+    arr = np.array(
+        [[r["wer"], r["cer"], r["soft_cer"], r["mer"], r["wil"]] for r in rows]
+    )
     return {
-        "label":    label,
-        "n":        len(rows),
-        "WER":      float(arr[:, 0].mean()),
-        "CER":      float(arr[:, 1].mean()),
+        "label": label,
+        "n": len(rows),
+        "WER": float(arr[:, 0].mean()),
+        "CER": float(arr[:, 1].mean()),
         "Soft-CER (dialect-aware)": float(arr[:, 2].mean()),
         "Soft-CER / CER ratio": (
             float(arr[:, 2].mean() / arr[:, 1].mean())
-            if arr[:, 1].mean() > 0 else float("nan")
+            if arr[:, 1].mean() > 0
+            else float("nan")
         ),
-        "MER (complement)":  float(arr[:, 3].mean()),
-        "WIL (complement)":  float(arr[:, 4].mean()),
+        "MER (complement)": float(arr[:, 3].mean()),
+        "WIL (complement)": float(arr[:, 4].mean()),
     }
 
 
@@ -114,7 +126,9 @@ def print_summary(s: dict) -> None:
         return
     logger.info(f"  WER       : {s['WER']:.4f}")
     logger.info(f"  CER       : {s['CER']:.4f}")
-    logger.info(f"  Soft-CER  : {s.get('Soft-CER (dialect-aware)', s.get('Soft-CER', 0)):.4f}  [dialect-aware, key metric]")
+    logger.info(
+        f"  Soft-CER  : {s['Soft-CER (dialect-aware)']:.4f}  [dialect-aware, key metric]"
+    )
     logger.info(
         f"  Soft/CER  : {s.get('Soft-CER / CER ratio', float('nan')):.3f}"
         "  (<1 means normalization-aware weighting lowers apparent error)"
@@ -124,6 +138,7 @@ def print_summary(s: dict) -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main(args: argparse.Namespace) -> None:
     logger.add("logs/evaluate_asr.log", rotation="10 MB")
@@ -141,8 +156,7 @@ def main(args: argparse.Namespace) -> None:
 
     if hyp_col not in df.columns:
         logger.error(
-            f"Hypothesis column '{hyp_col}' not found. "
-            f"Available: {list(df.columns)}"
+            f"Hypothesis column '{hyp_col}' not found. Available: {list(df.columns)}"
         )
         sys.exit(1)
 
@@ -152,7 +166,7 @@ def main(args: argparse.Namespace) -> None:
 
     # Keep only rows with non-empty reference AND hypothesis
     mask = df[ref_col].notna() & df[hyp_col].notna()
-    df   = df[mask].copy()
+    df = df[mask].copy()
     logger.info(f"Records with both hyp + ref: {len(df)}")
 
     if df.empty:
@@ -174,9 +188,9 @@ def main(args: argparse.Namespace) -> None:
     breakdowns: list[dict] = [overall]
 
     if "corrected" in df.columns:
-        df_corr    = df[df["corrected"]]
-        df_nocorr  = df[not df["corrected"]]
-        rows_corr  = [
+        df_corr = df[df["corrected"]]
+        df_nocorr = df[~df["corrected"]]
+        rows_corr = [
             compute_metrics_row(str(r[hyp_col]), str(r[ref_col]))
             for _, r in df_corr.iterrows()
         ]
@@ -184,7 +198,7 @@ def main(args: argparse.Namespace) -> None:
             compute_metrics_row(str(r[hyp_col]), str(r[ref_col]))
             for _, r in df_nocorr.iterrows()
         ]
-        s_corr   = summarise(rows_corr,   "Corrected clips (dialect-gap)")
+        s_corr = summarise(rows_corr, "Corrected clips (dialect-gap)")
         s_nocorr = summarise(rows_nocorr, "Non-corrected clips")
         print_summary(s_corr)
         print_summary(s_nocorr)
@@ -220,22 +234,22 @@ def main(args: argparse.Namespace) -> None:
         logger.warning("'genre_en' column not found — skipping per-genre breakdown")
 
     # ── Per-record delta: CER − Soft-CER ─────────────────────────────────────
-    df["wer"]      = [r["wer"]      for r in metric_rows]
-    df["cer"]      = [r["cer"]      for r in metric_rows]
+    df["wer"] = [r["wer"] for r in metric_rows]
+    df["cer"] = [r["cer"] for r in metric_rows]
     df["soft_cer"] = [r["soft_cer"] for r in metric_rows]
-    df["mer"]      = [r["mer"]      for r in metric_rows]
-    df["wil"]      = [r["wil"]      for r in metric_rows]
-    df["cer_delta"] = df["cer"] - df["soft_cer"]   # positive = soft helps
+    df["mer"] = [r["mer"] for r in metric_rows]
+    df["wil"] = [r["wil"] for r in metric_rows]
+    df["cer_delta"] = df["cer"] - df["soft_cer"]  # positive = soft helps
 
     delta_mean = df["cer_delta"].mean()
-    delta_std  = df["cer_delta"].std()
+    delta_std = df["cer_delta"].std()
     logger.info("─" * 55)
-    logger.info("  CER − Soft-CER delta  (positive = normalization-aware weighting helps)")
+    logger.info(
+        "  CER − Soft-CER delta  (positive = normalization-aware weighting helps)"
+    )
     logger.info(f"  Mean : {delta_mean:+.4f}  Std: {delta_std:.4f}")
 
-    top_helped = df.nlargest(5, "cer_delta")[
-        [ref_col, hyp_col, "cer", "soft_cer"]
-    ]
+    top_helped = df.nlargest(5, "cer_delta")[[ref_col, hyp_col, "cer", "soft_cer"]]
     logger.info("  Top-5 clips where soft weighting helped most:")
     for _, row in top_helped.iterrows():
         logger.info(
@@ -245,14 +259,14 @@ def main(args: argparse.Namespace) -> None:
 
     # ── Save report ───────────────────────────────────────────────────────────
     report = {
-        "split":      args.split,
+        "split": args.split,
         "hypothesis": hyp_col,
-        "overall":    overall,
+        "overall": overall,
         "breakdowns": breakdowns,
-        "per_genre":  genre_summaries,
-        "cer_delta":  {
+        "per_genre": genre_summaries,
+        "cer_delta": {
             "mean": float(delta_mean),
-            "std":  float(delta_std),
+            "std": float(delta_std),
             "interpretation": "positive = normalization-aware weighting reduces apparent error",
         },
         "soft_cer_note": (
@@ -267,7 +281,7 @@ def main(args: argparse.Namespace) -> None:
     }
 
     out_json = REPORT_DIR / f"asr_eval_{args.split}_{hyp_col}.json"
-    out_csv  = REPORT_DIR / f"asr_eval_{args.split}_{hyp_col}.csv"
+    out_csv = REPORT_DIR / f"asr_eval_{args.split}_{hyp_col}.csv"
 
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
@@ -287,11 +301,14 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="4-Tier ASR evaluation for Nabat-AI")
     parser.add_argument(
-        "--split", choices=["train", "val", "test"], default="test",
-        help="Dataset split to evaluate (default: test)"
+        "--split",
+        choices=["train", "val", "test"],
+        default="test",
+        help="Dataset split to evaluate (default: test)",
     )
     parser.add_argument(
-        "--hypothesis", default="text_whisper",
-        help="JSONL column containing model hypotheses (default: text_whisper)"
+        "--hypothesis",
+        default="text_whisper",
+        help="JSONL column containing model hypotheses (default: text_whisper)",
     )
     main(parser.parse_args())

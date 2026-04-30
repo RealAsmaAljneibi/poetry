@@ -18,7 +18,6 @@ from collections import defaultdict
 from pathlib import Path
 
 from loguru import logger
-
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -31,13 +30,17 @@ from src.evaluation.metrics import (
 )
 
 PROJECT_ROOT = Path(__file__).parent.parent
-DEFAULT_PREDICTIONS = PROJECT_ROOT / "outputs/reports/poem_emotion_predictions_test.json"
+DEFAULT_PREDICTIONS = (
+    PROJECT_ROOT / "outputs/reports/poem_emotion_predictions_test.json"
+)
 DEFAULT_FUSION_REPORT = PROJECT_ROOT / "outputs/reports/emotion_fusion_eval.json"
 OUT_PATH = PROJECT_ROOT / "outputs/reports/emotion_partial_credit_eval.json"
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Poem-level emotion partial-credit evaluation")
+    p = argparse.ArgumentParser(
+        description="Poem-level emotion partial-credit evaluation"
+    )
     p.add_argument("--predictions", type=Path, default=DEFAULT_PREDICTIONS)
     p.add_argument("--fusion-report", type=Path, default=DEFAULT_FUSION_REPORT)
     return p.parse_args()
@@ -68,7 +71,6 @@ def tier_name(score: float) -> str:
 
 
 def compute_inter_annotator_agreement(test_jsonl_path: Path) -> dict:
-    """Compute agreement between audio_ref and text_ref emotion annotations."""
     audio_refs: list[str] = []
     text_refs: list[str] = []
     for line in test_jsonl_path.read_text(encoding="utf-8").splitlines():
@@ -85,24 +87,29 @@ def compute_inter_annotator_agreement(test_jsonl_path: Path) -> dict:
     return {
         "n_pairs": len(audio_refs),
         "cohen_kappa": round(inter_annotator_kappa(audio_refs, text_refs), 4),
-        "krippendorff_alpha": round(krippendorff_alpha_nominal(audio_refs, text_refs), 4),
+        "krippendorff_alpha": round(
+            krippendorff_alpha_nominal(audio_refs, text_refs), 4
+        ),
     }
 
 
 def main() -> None:
     args = parse_args()
-    logger.add(PROJECT_ROOT / "logs/evaluate_emotion_partial_credit.log", rotation="10 MB")
+    logger.add(
+        PROJECT_ROOT / "logs/evaluate_emotion_partial_credit.log", rotation="10 MB"
+    )
     predictions = load_json(args.predictions)
     fusion_report = load_json(args.fusion_report)
 
-    # Inter-annotator agreement
     test_jsonl = PROJECT_ROOT / "data/processed/test.jsonl"
-    agreement = compute_inter_annotator_agreement(test_jsonl) if test_jsonl.exists() else {}
+    agreement = (
+        compute_inter_annotator_agreement(test_jsonl) if test_jsonl.exists() else {}
+    )
 
-    # Get labels from fusion report for nDCG computation
     merge_profile = fusion_report.get("merge_profile", "rare_merge_v1")
     try:
         from src.data.labels import get_merged_emotion_classes
+
         labels = get_merged_emotion_classes(merge_profile)
     except Exception:
         labels = []
@@ -148,13 +155,17 @@ def main() -> None:
                 label: {"mean_pc": round(sum(vals) / len(vals), 4), "n": len(vals)}
                 for label, vals in sorted(by_true_class.items())
             },
-            "hard_metrics": systems_report.get(variant_name, {}).get("poem_metrics", {}),
+            "hard_metrics": systems_report.get(variant_name, {}).get(
+                "poem_metrics", {}
+            ),
         }
 
     report = {
         "source_predictions": str(args.predictions.relative_to(PROJECT_ROOT)),
         "source_fusion_report": str(args.fusion_report.relative_to(PROJECT_ROOT)),
-        "adopted_poem_aggregation": fusion_report.get("adopted_poem_aggregation", "conf_weighted"),
+        "adopted_poem_aggregation": fusion_report.get(
+            "adopted_poem_aggregation", "conf_weighted"
+        ),
         "adopted_variant_test": fusion_report.get("test", {}).get("adopted_variant"),
         "inter_annotator_agreement": agreement,
         "ndcg_at_3_by_variant": ndcg_by_variant,
@@ -168,7 +179,9 @@ def main() -> None:
             "0.00": "Invalid / empty",
         },
     }
-    OUT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    OUT_PATH.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     logger.success("Saved partial-credit report → {}", OUT_PATH)
 
 

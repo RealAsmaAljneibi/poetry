@@ -30,7 +30,7 @@ Usage:
 AROUSAL_CLASSES: list[str] = ["Low", "Medium", "High"]
 
 AROUSAL2ID: dict[str, int] = {label: i for i, label in enumerate(AROUSAL_CLASSES)}
-ID2AROUSAL:  dict[int, str] = {i: label for label, i in AROUSAL2ID.items()}
+ID2AROUSAL: dict[int, str] = {i: label for label, i in AROUSAL2ID.items()}
 
 # --- Mapping from canonical emotion_audio label → Arousal level ---
 #
@@ -55,20 +55,20 @@ ID2AROUSAL:  dict[int, str] = {i: label for label, i in AROUSAL2ID.items()}
 
 _EMOTION_TO_AROUSAL: dict[str, str] = {
     # High
-    "Defiance (Tahaddi)":              "High",
-    "Pride (Fakhr)":                   "High",
-    "Humor (Turfah)":                  "High",
+    "Defiance (Tahaddi)": "High",
+    "Pride (Fakhr)": "High",
+    "Humor (Turfah)": "High",
     # Medium
-    "Delicate Love (Hub Raqeeq)":      "Medium",
-    "Admiration (I'jab)":              "Medium",
-    "Disappointment (Khayba)":         "Medium",
-    "Compassion (Hanaan)":             "Medium",
-    "Hope (Amal)":                     "Medium",
-    "Longing (Shawq)":                 "Medium",
+    "Delicate Love (Hub Raqeeq)": "Medium",
+    "Admiration (I'jab)": "Medium",
+    "Disappointment (Khayba)": "Medium",
+    "Compassion (Hanaan)": "Medium",
+    "Hope (Amal)": "Medium",
+    "Longing (Shawq)": "Medium",
     # Low
-    "Neutral / Descriptive (Wasfi)":   "Low",
-    "Sorrow (Huzn)":                   "Low",
-    "Contemplation (Ta'ammul)":        "Low",
+    "Neutral / Descriptive (Wasfi)": "Low",
+    "Sorrow (Huzn)": "Low",
+    "Contemplation (Ta'ammul)": "Low",
 }
 
 
@@ -86,7 +86,9 @@ def emotion_to_arousal(emotion_label: str | None) -> str | None:
     # Partial prefix match (handles short labels like "Sorrow")
     low = label.lower()
     for canonical, arousal in _EMOTION_TO_AROUSAL.items():
-        if canonical.lower().startswith(low) or low.startswith(canonical.lower().split("(")[0].strip()):
+        if canonical.lower().startswith(low) or low.startswith(
+            canonical.lower().split("(")[0].strip()
+        ):
             return arousal
     return None
 

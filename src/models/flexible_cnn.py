@@ -23,11 +23,12 @@ import torch.nn.functional as F
 
 # N_MELS and N_CLASSES are resolved lazily to avoid import-time side effects.
 # Callers should pass explicit values when constructing FlexibleEmotionCNN.
-_N_MELS    = 128
-_N_CLASSES = 12   # len(EMOTION_CLASSES) — kept here as default
+_N_MELS = 128
+_N_CLASSES = 12  # len(EMOTION_CLASSES) — kept here as default
 
 
-# ──11: Activation factory ─────────────────────────────────────────
+# ── Activation factory ────────────────────────────────────────────
+
 
 def make_activation(name: str, slope: float = 0.01) -> nn.Module:
     """Return the activation module corresponding to *name*."""
@@ -40,9 +41,12 @@ def make_activation(name: str, slope: float = 0.01) -> nn.Module:
     raise ValueError(f"Unknown activation: {name!r}")
 
 
-# ──10: Normalization factory ──────────────────────────────────────
+# ── Normalization factory ─────────────────────────────────────────
 
-def make_norm(norm_type: str, channels: int, group_norm_groups: int = 32) -> nn.Module | None:
+
+def make_norm(
+    norm_type: str, channels: int, group_norm_groups: int = 32
+) -> nn.Module | None:
     """Return the normalization module, or *None* for norm_type='none'."""
     if norm_type == "batch":
         return nn.BatchNorm1d(channels)
@@ -50,13 +54,14 @@ def make_norm(norm_type: str, channels: int, group_norm_groups: int = 32) -> nn.
         groups = min(group_norm_groups, channels)
         return nn.GroupNorm(groups, channels)
     if norm_type == "layer":
-        return nn.GroupNorm(1, channels)   # LayerNorm equivalent for 1-D conv
+        return nn.GroupNorm(1, channels)  # LayerNorm equivalent for 1-D conv
     if norm_type == "none":
         return None
     raise ValueError(f"Unknown norm_type: {norm_type!r}")
 
 
-# ──22: Pooling strategy factory ───────────────────────────────────
+# ── Pooling strategy factory ──────────────────────────────────────
+
 
 def make_pool(pool_type: str) -> nn.Module:
     """Return the temporal pooling module corresponding to *pool_type*."""
@@ -65,11 +70,12 @@ def make_pool(pool_type: str) -> nn.Module:
     if pool_type == "adaptive_max":
         return nn.AdaptiveMaxPool1d(1)
     if pool_type == "adaptive_avg4":
-        return nn.AdaptiveAvgPool1d(4)   # retains 4 time steps (temporal structure)
+        return nn.AdaptiveAvgPool1d(4)  # retains 4 time steps (temporal structure)
     raise ValueError(f"Unknown pool_type: {pool_type!r}")
 
 
 # ── FlexibleEmotionCNN ─────────────────────────────────────────────────────────
+
 
 class FlexibleEmotionCNN(nn.Module):
     """
@@ -89,12 +95,18 @@ class FlexibleEmotionCNN(nn.Module):
             num_classes: Number of output classes (default: 12 emotion classes).
         """
         super().__init__()
-        in_ch  = _N_MELS
+        in_ch = _N_MELS
         blocks: list[nn.Module] = []
 
         for i, out_ch in enumerate(cfg.channels):
-            blocks.append(nn.Conv1d(in_ch, out_ch, kernel_size=cfg.kernel_size,
-                                    padding=cfg.kernel_size // 2))
+            blocks.append(
+                nn.Conv1d(
+                    in_ch,
+                    out_ch,
+                    kernel_size=cfg.kernel_size,
+                    padding=cfg.kernel_size // 2,
+                )
+            )
             norm = make_norm(cfg.norm_type, out_ch, cfg.group_norm_groups)
             if norm is not None:
                 blocks.append(norm)
@@ -104,13 +116,12 @@ class FlexibleEmotionCNN(nn.Module):
                 blocks.append(nn.MaxPool1d(kernel_size=2))
             in_ch = out_ch
 
-        # Final pooling
         blocks.append(make_pool(cfg.pool_type))
         self.features = nn.Sequential(*blocks)
 
         # Flattened size: adaptive_avg/max → 1 frame, adaptive_avg4 → 4 frames
         flat_mult = 4 if cfg.pool_type == "adaptive_avg4" else 1
-        flat_dim  = in_ch * flat_mult
+        flat_dim = in_ch * flat_mult
 
         self.classifier = nn.Sequential(
             nn.Dropout(p=cfg.dropout),
@@ -119,7 +130,6 @@ class FlexibleEmotionCNN(nn.Module):
             nn.Linear(cfg.hidden_dim, num_classes),
         )
 
-        # Ingredient 3: Weight initialization
         if cfg.init_scheme != "default":
             self._init_weights(cfg.init_scheme)
 
@@ -129,7 +139,9 @@ class FlexibleEmotionCNN(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
                 if scheme == "kaiming":
-                    nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity="relu"
+                    )
                 elif scheme == "xavier":
                     nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
@@ -158,7 +170,8 @@ class FlexibleEmotionCNN(nn.Module):
         return self.classifier(self.embed(x))
 
 
-# ──4: Loss functions ──────────────────────────────────────────────
+# ── Loss functions ────────────────────────────────────────────────
+
 
 class FocalLoss(nn.Module):
     """
@@ -170,7 +183,7 @@ class FocalLoss(nn.Module):
 
     def __init__(self, gamma: float = 2.0, weight: torch.Tensor | None = None):
         super().__init__()
-        self.gamma  = gamma
+        self.gamma = gamma
         self.weight = weight
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -181,7 +194,7 @@ class FocalLoss(nn.Module):
 
 def make_loss_fn(cfg, class_weights: torch.Tensor | None) -> nn.Module:
     """
-    Ingredient 4: Loss function factory.
+    Loss function factory.
 
     Args:
         cfg:           CNNAblationConfig (or compatible).
