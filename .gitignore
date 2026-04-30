@@ -47,10 +47,15 @@ models/checkpoints/
 models/fine_tuned/
 models/saved/
 
-# Data (large datasets)
+# Data (large datasets) — raw audio and third-party corpora excluded
 data/raw/
-data/processed/
 data/external/
+# Exclude large/third-party files from processed/
+data/processed/sada_*.jsonl
+data/processed/embeddings/
+data/processed/emotion_embeddings/
+data/processed/master_dataset.jsonl
+data/processed/master_dataset.csv
 *.wav
 *.mp3
 *.flac
